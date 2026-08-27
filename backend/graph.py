@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any, Callable
 
 from langgraph.graph import END, START, StateGraph
@@ -82,3 +83,30 @@ def plan_trip(request: str, llm: LLM | None = None) -> TravelState:
     """Run one request end to end and return the final state."""
     llm = llm or LLM()
     return build_graph(llm).invoke(new_state(request))
+
+
+def stream_trip(
+    request: str, llm: LLM | None = None
+) -> Iterator[tuple[str, dict[str, Any], TravelState]]:
+    """Run a request, yielding after each node so callers can show progress.
+
+    Yields ``(node_name, that_node's_update, state_so_far)``. A full run takes
+    the better part of a minute; without this the caller has nothing to show
+    until it finishes, and a multi-agent system that reveals nothing while it
+    works is indistinguishable from a slow one.
+    """
+    llm = llm or LLM()
+    state: TravelState = new_state(request)
+
+    for step in build_graph(llm).stream(state, stream_mode="updates"):
+        for node, update in step.items():
+            if not isinstance(update, dict):
+                continue
+            for key, value in update.items():
+                # `trace`, `errors` and `sources` accumulate; everything else
+                # replaces. Mirror the reducers declared on TravelState.
+                if key in {"trace", "errors", "sources"}:
+                    state[key] = [*(state.get(key) or []), *value]
+                else:
+                    state[key] = value
+            yield node, update, state

@@ -8,15 +8,28 @@ The part that matters: **a first-class evaluation layer**. The system reports
 whether the supervisor routed to the right agents, whether the final plans are
 any good, and — critically — **how far the LLM judge agrees with a human**.
 
-> Status: in progress. Phases 1–3 are done — all five agents run end to end
-> and the evaluation layer reports on them. Backend API, UI and live places
-> data are still to come.
+> Status: phases 1–5 done. Agents, evaluation, API and UI all run.
+> Remaining: LangSmith tracing and final polish.
 
 ## Run it with zero API keys
 
+One command, one process, browser at http://localhost:8000:
+
 ```bash
-uv sync
+uv sync && npm --prefix frontend install && npm --prefix frontend run build && uv run uvicorn backend.api:app
+```
+
+Or from the terminal, no UI:
+
+```bash
 uv run python -m scripts.run_once "5 days in Japan, mid-range budget, food and history"
+```
+
+For frontend development, run the API and the Vite dev server separately:
+
+```bash
+uv run uvicorn backend.api:app --reload        # :8000
+npm --prefix frontend run dev                  # :5173, proxies to :8000
 ```
 
 Every external call goes through an adapter with a mock mode, and the model
@@ -116,6 +129,9 @@ which is what the trajectory checks in `eval/` score.
 | `eval/run.py` | The report |
 | `eval/places_benchmark.py` | Error rate of the place verifier itself |
 | `eval/grade.py` | Grade plans by hand, to validate the judge |
+| `backend/api.py` | FastAPI app: `/api/plan`, `/api/trips`, `/ws/plan` |
+| `backend/db.py` | Trips and per-agent run records |
+| `frontend/` | React (Vite) chat UI |
 
 ## Design notes
 
