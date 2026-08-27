@@ -179,7 +179,18 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
                 lines.append(f"- **{leg.mode}** — {leg.description}{cost}")
             lines.append("")
 
+    footer = []
+    if research and research.attractions:
+        checked = [a for a in research.attractions if a.verified is not None]
+        if checked:
+            confirmed = sum(a.verified for a in checked)
+            footer.append(
+                f"{confirmed} of {len(checked)} recommended places confirmed "
+                "against an independent map dataset"
+            )
     if sources:
-        lines += ["---", "", f"_Data sources: {', '.join(sources)}._"]
+        footer.append(f"Data sources: {', '.join(sources)}")
+    if footer:
+        lines += ["---", "", f"_{'. '.join(footer)}._"]
 
     return {"final_plan": "\n".join(lines).strip(), "trace": ["aggregator"], "errors": errors}

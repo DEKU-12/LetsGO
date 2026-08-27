@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.adapters.places import PlacesAdapter
 from backend.adapters.weather import WeatherAdapter
 from backend.llm import LLM, LLMError, register_mock
 from backend.state import Attraction, ResearchOutput, TravelState, WeatherOutlook
@@ -134,6 +135,24 @@ def destination_research(state: TravelState, llm: LLM) -> dict[str, Any]:
             attractions.append(Attraction(**item))
         except (TypeError, ValueError):
             continue
+
+    # Confirm the proposed places actually exist at this destination. The model
+    # is good at choosing attractions and occasionally confident about ones that
+    # are not there; this is the check on that.
+    # An "experience" is an activity, not a location — a food crawl or a day
+    # trip has no single point on a map, so verifying it would only manufacture
+    # failures. Only physical places are checked.
+    locatable = [a for a in attractions if a.category != "experience"]
+    if locatable:
+        places = PlacesAdapter().fetch(
+            destination=params.destination,
+            names=[a.name for a in locatable],
+        )
+        confirmed = places.data["confirmed"]
+        if not places.is_mock:
+            sources.append(f"{places.provider}:{places.source}")
+            for attraction in locatable:
+                attraction.verified = confirmed.get(attraction.name) is not None
 
     research = ResearchOutput(
         destination=params.destination,

@@ -41,7 +41,8 @@ Latest run, `claude-sonnet-5`, 19 labeled requests:
 | Micro precision / recall / F1 | 1.00 / 1.00 / 1.00 |
 | Supervisor plans needing repair | 0% |
 | Trajectory checks clean | 3/3 |
-| Mean plan quality (LLM judge) | 3.5 / 5 |
+| Mean plan quality (LLM judge) | 3.6 / 5 |
+| Recommended places confirmed against a map dataset | 65% (a floor — see below) |
 | **Judge validated against human grades** | **not yet — see below** |
 
 **Read the 100% sceptically.** It does not mean the router is perfect; it means
@@ -55,6 +56,24 @@ Rome"* as "not a travel request", so the supervisor never saw them. That bug had
 been in the code since phase 1, passed every unit test, and was invisible in
 manual testing. The eval layer found it on its first run — which is the argument
 for building evaluation early rather than last.
+
+**Places are verified, not trusted.** Every attraction the model recommends is
+checked against Geoapify — does a place by that name exist at that destination?
+The verifier itself is benchmarked (`uv run python -m eval.places_benchmark`):
+on 18 labelled cases it confirmed 12/12 real places and rejected 6/6 invented
+ones. Precision is the number that matters there: a false positive would launder
+a hallucination as verified fact.
+
+The 65% in the table is a **lower bound**, not an estimate of how often the model
+invents places. The current misses are all real — the Acropolis of Athens, Museu
+Nacional do Azulejo — that the map dataset did not match. "Unconfirmed" means
+"could not confirm", and nothing user-facing calls an unconfirmed place fake.
+
+Geoapify is used as a *verifier* rather than a source on purpose, and the reason
+was measured: a radius search around Kyoto returns commemorative plaques and the
+city hall, while Fushimi Inari and Kinkaku-ji do not appear at all. OpenStreetMap
+knows what is near a point, not what is worth seeing. Sourcing attractions from
+it would have made the plans worse.
 
 **The judge is not yet validated.** Its 3.5/5 is currently an unverified number,
 and the report says so rather than presenting it as a result. Validation needs
@@ -95,6 +114,7 @@ which is what the trajectory checks in `eval/` score.
 | `eval/judge.py` | LLM-as-judge on a 5-part rubric, plus judge-vs-human validation |
 | `eval/trajectory.py` | Dependency order, unused output, repaired routes |
 | `eval/run.py` | The report |
+| `eval/places_benchmark.py` | Error rate of the place verifier itself |
 | `eval/grade.py` | Grade plans by hand, to validate the judge |
 
 ## Design notes

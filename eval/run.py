@@ -88,7 +88,7 @@ def main() -> int:
             print(f"     {result.case.id:<26} {'; '.join(bits) or 'clarified instead'}")
 
     # -- 2. plan quality ----------------------------------------------------
-    judged, trajectories = [], []
+    judged, trajectories, grounding = [], [], []
     if args.plans > 0:
         chosen = [c for c in ROUTING_CASES if c.id in PLAN_CASE_IDS][: args.plans]
         print(f"\n\n2. PLAN QUALITY   ({len(chosen)} plans, judged 1-5 per dimension)\n")
@@ -99,6 +99,13 @@ def main() -> int:
             result = judge_plan(case.id, case.request, plan, llm)
             judged.append(result)
             trajectories.append((case.id, check_trajectory(state)))
+
+            research = state.get("research")
+            checked = [a for a in (research.attractions if research else [])
+                       if a.verified is not None]
+            if checked:
+                grounding.append((case.id, sum(a.verified for a in checked), len(checked),
+                                  [a.name for a in checked if not a.verified]))
 
             if result.error:
                 print(f"   {case.id:<26} judging failed: {result.error}")
@@ -115,6 +122,16 @@ def main() -> int:
                 if values:
                     avg = sum(values) / len(values)
                     print(f"   {'  ' + dimension:<26} {avg:>4.1f}/5   {_bar(avg / 5)}")
+
+        if grounding:
+            total = sum(n for _, _, n, _ in grounding)
+            confirmed = sum(c for _, c, _, _ in grounding)
+            print(f"\n   {'places confirmed':<26} {confirmed}/{total} "
+                  f"({confirmed / total:.0%}) against an independent map dataset")
+            unconfirmed = [n for _, _, _, names in grounding for n in names]
+            if unconfirmed:
+                print("   could not confirm: " + ", ".join(unconfirmed[:6]))
+                print("   (unconfirmed means not matched, not necessarily invented)")
 
     # -- 3. trajectory ------------------------------------------------------
     if trajectories:
@@ -174,8 +191,11 @@ def main() -> int:
                     for r in selection.results if not r.exact
                 ],
             },
-            "plans": [{"case": r.case_id, "scores": r.scores, "overall": r.overall}
+            "plans": [{"case": r.case_id, "scores": r.scores, "overall": r.overall,
+                       "not_applicable": r.not_applicable}
                       for r in judged],
+            "grounding": [{"case": c, "confirmed": conf, "checked": n, "unconfirmed": names}
+                          for c, conf, n, names in grounding],
             "trajectory": [{"case": c, "clean": t.clean, "issues": t.issues}
                            for c, t in trajectories],
             "judge_validation": {

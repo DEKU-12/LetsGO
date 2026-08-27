@@ -37,6 +37,10 @@ class Attraction(BaseModel):
     category: str = "attraction"
     description: str = ""
     est_hours: float = 2.0
+    #: True if an independent geographic dataset confirmed this place exists at
+    #: the destination, False if it could not be confirmed, None if unchecked.
+    #: False means "not confirmed", not "fake" — see adapters/places.py.
+    verified: bool | None = None
 
 
 class WeatherOutlook(BaseModel):

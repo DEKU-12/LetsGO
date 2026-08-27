@@ -74,3 +74,41 @@ def test_configured_key_is_used_when_none_is_passed() -> None:
 
     adapter = WeatherAdapter(api_key=None)
     assert adapter.api_key == settings.openweather_api_key
+
+
+# -- place verification -----------------------------------------------------
+
+
+def test_name_matching_accepts_real_variants_and_rejects_near_misses() -> None:
+    """Thresholds come from a labelled benchmark; this pins the behaviour."""
+    from backend.adapters.places import names_match
+
+    # Same place, spelled or ordered differently.
+    assert names_match("Jeronimos Monastery", "Jerónimos Monastery")
+    assert names_match("Castelo de Sao Jorge", "São Jorge Castle")
+    assert names_match("Nijo Castle", "Nijō Castle")
+    assert names_match("Fushimi Inari Taisha", "Fushimi Inari-taisha")
+
+    # Different places that a naive matcher would confuse.
+    assert not names_match("Palacio do Nada", "Palácio do Mitelo")
+    assert not names_match("Temple of the Silver Fox", "Entry of Theotokos into the Temple")
+    assert not names_match("Belem Tower", 'Belém 2a8 "Bistrô"')
+
+
+def test_generic_words_alone_never_confirm_a_match() -> None:
+    """'Museum' matching 'Museum' must not count as identifying a place."""
+    from backend.adapters.places import names_match
+
+    assert not names_match("National Museum", "City Museum")
+    assert not names_match("Old Town Park", "Riverside Park")
+
+
+def test_places_mock_confirms_nothing() -> None:
+    """A mock verifier that verified things would defeat the point of the check."""
+    from backend.adapters.places import PlacesAdapter
+
+    result = PlacesAdapter(api_key=NO_KEY).fetch(
+        destination="Lisbon", names=["Jeronimos Monastery", "Museum of Imaginary Tiles"]
+    )
+    assert result.is_mock
+    assert all(v is None for v in result.data["confirmed"].values())
