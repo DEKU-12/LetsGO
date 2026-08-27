@@ -32,6 +32,7 @@ class Settings:
     llm_model: str | None = field(default_factory=lambda: _env("LLM_MODEL"))
 
     openweather_api_key: str | None = field(default_factory=lambda: _env("OPENWEATHER_API_KEY"))
+    geoapify_api_key: str | None = field(default_factory=lambda: _env("GEOAPIFY_API_KEY"))
     opentripmap_api_key: str | None = field(default_factory=lambda: _env("OPENTRIPMAP_API_KEY"))
     google_places_api_key: str | None = field(default_factory=lambda: _env("GOOGLE_PLACES_API_KEY"))
 
