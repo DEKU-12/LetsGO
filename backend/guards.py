@@ -28,8 +28,18 @@ Return a JSON object with exactly these keys:
   travelers     integer, default 1
   preferences   array of short lowercase strings (e.g. ["food", "history"])
   notes         string or null - anything else that constrains the trip
-  usable        boolean - false if this is not a travel request at all
+  usable        boolean - see below
   clarification string or null - if usable is false, one short question to ask
+
+`usable` is true whenever there is a real place we could say something useful
+about. A question about a destination IS usable: "what is the weather in Rome",
+"is Marrakesh safe", "do I need a visa for Vietnam", "what is worth seeing in
+Lisbon" are all usable, with the destination filled in and everything else null.
+Answering the question asked is the job; do not demand that someone be booking a
+trip before you will help them.
+
+Set usable to false only when there is no destination to work with, or the
+request is not about travel at all. Then ask which place they mean.
 
 Infer nothing that is not implied. Do not invent a destination."""
 

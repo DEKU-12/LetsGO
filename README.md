@@ -8,8 +8,9 @@ The part that matters: **a first-class evaluation layer**. The system reports
 whether the supervisor routed to the right agents, whether the final plans are
 any good, and — critically — **how far the LLM judge agrees with a human**.
 
-> Status: in progress. Phases 1–2 are done — all five agents run end to end.
-> The evaluation layer (phase 3) is next.
+> Status: in progress. Phases 1–3 are done — all five agents run end to end
+> and the evaluation layer reports on them. Backend API, UI and live places
+> data are still to come.
 
 ## Run it with zero API keys
 
@@ -25,6 +26,43 @@ degraded path.
 
 To use a real model, copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`
 (the project targets `claude-sonnet-5`).
+
+## Evaluation results
+
+```
+uv run python -m eval.run
+```
+
+Latest run, `claude-sonnet-5`, 19 labeled requests:
+
+| Metric | Result |
+| --- | --- |
+| Agent-selection exact match | **19/19 (100%)** |
+| Micro precision / recall / F1 | 1.00 / 1.00 / 1.00 |
+| Supervisor plans needing repair | 0% |
+| Trajectory checks clean | 3/3 |
+| Mean plan quality (LLM judge) | 3.5 / 5 |
+| **Judge validated against human grades** | **not yet — see below** |
+
+**Read the 100% sceptically.** It does not mean the router is perfect; it means
+this 19-case dataset has stopped discriminating. The honest reading is "no known
+failure mode in the cases tested so far", and the next thing the dataset needs is
+genuinely ambiguous requests, not more easy ones.
+
+The first run of this suite scored 84.2%, and the three failures were all the
+same bug: the input guard was rejecting questions like *"what's the weather in
+Rome"* as "not a travel request", so the supervisor never saw them. That bug had
+been in the code since phase 1, passed every unit test, and was invisible in
+manual testing. The eval layer found it on its first run — which is the argument
+for building evaluation early rather than last.
+
+**The judge is not yet validated.** Its 3.5/5 is currently an unverified number,
+and the report says so rather than presenting it as a result. Validation needs
+human-graded plans:
+
+```
+uv run python -m eval.grade
+```
 
 ## Architecture
 
@@ -52,7 +90,12 @@ which is what the trajectory checks in `eval/` score.
 | `backend/guards.py` | Free text → validated `TripParams`; output well-formedness |
 | `backend/agents/` | Supervisor + worker nodes |
 | `backend/adapters/` | External APIs, each with a mock mode |
-| `eval/` | Agent-selection metrics, LLM judge + judge validation, trajectory checks |
+| `eval/dataset.py` | 19 labeled requests + stored human grades |
+| `eval/selection.py` | Per-agent precision/recall, micro average, exact match |
+| `eval/judge.py` | LLM-as-judge on a 5-part rubric, plus judge-vs-human validation |
+| `eval/trajectory.py` | Dependency order, unused output, repaired routes |
+| `eval/run.py` | The report |
+| `eval/grade.py` | Grade plans by hand, to validate the judge |
 
 ## Design notes
 
@@ -76,7 +119,7 @@ which is what the trajectory checks in `eval/` score.
 
 1. ✅ Skeleton: structure, `uv` env, one adapter, supervisor + one worker, runs end to end
 2. ✅ All agents + shared state
-3. ⬜ Eval layer (selection metrics, LLM judge + judge validation, trajectory checks)
+3. ✅ Eval layer (selection metrics, LLM judge + judge validation, trajectory checks)
 4. ⬜ FastAPI backend with WebSocket progress + storage
 5. ⬜ React (Vite) chat UI
 6. ⬜ Real APIs where keys exist + LangSmith tracing

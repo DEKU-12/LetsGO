@@ -102,3 +102,18 @@ def test_weather_only_question_does_not_book_a_hotel(llm: LLM) -> None:
     assert "accommodation" not in state["route_plan"]
     assert "transport" not in state["route_plan"]
     assert state["accommodation"] is None
+
+
+def test_information_questions_are_answered_not_refused(llm: LLM) -> None:
+    """A question about a place is a valid request, not something to clarify.
+
+    Caught by eval/run.py: the guard was rejecting these, so the supervisor
+    never got the chance to route them to research.
+    """
+    for question in (
+        "What's the weather like in Rome in October?",
+        "Is Marrakesh safe for a solo female traveller?",
+    ):
+        state = plan_trip(question, llm)
+        assert state["clarification"] is None, f"refused: {question}"
+        assert RESEARCH in state["trace"]
