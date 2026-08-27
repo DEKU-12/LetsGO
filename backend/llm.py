@@ -62,7 +62,17 @@ class _Anthropic:
     def __post_init__(self) -> None:
         import anthropic  # imported lazily so the mock path needs no SDK
 
-        self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        headers = {}
+        if settings.anthropic_workspace_id:
+            headers["anthropic-workspace-id"] = settings.anthropic_workspace_id
+
+        self._client = anthropic.Anthropic(
+            api_key=settings.anthropic_api_key,
+            # A stray ANTHROPIC_BASE_URL in the shell would otherwise send
+            # these requests somewhere unexpected.
+            base_url="https://api.anthropic.com",
+            default_headers=headers or None,
+        )
 
     def __call__(self, system: str, prompt: str, max_tokens: int) -> str:
         response = self._client.messages.create(

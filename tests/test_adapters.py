@@ -1,13 +1,20 @@
-"""Adapters must always answer, with or without an API key."""
+"""Adapters must always answer, with or without an API key.
+
+`api_key=None` means "use whatever is configured", so it is not a way to test
+the no-key path — on a machine with a real key in .env these tests would quietly
+start making live calls. `api_key=""` is the explicit "no credential" case.
+"""
 
 from __future__ import annotations
 
 from backend.adapters.base import Adapter
 from backend.adapters.weather import WeatherAdapter
 
+NO_KEY = ""
+
 
 def test_weather_falls_back_to_mock_without_a_key() -> None:
-    result = WeatherAdapter(api_key=None).fetch(destination="Kyoto")
+    result = WeatherAdapter(api_key=NO_KEY).fetch(destination="Kyoto")
 
     assert result.is_mock
     assert result.provider == "openweather"
@@ -16,7 +23,7 @@ def test_weather_falls_back_to_mock_without_a_key() -> None:
 
 
 def test_unknown_destination_still_returns_something_usable() -> None:
-    result = WeatherAdapter(api_key=None).fetch(destination="Somewhereville")
+    result = WeatherAdapter(api_key=NO_KEY).fetch(destination="Somewhereville")
 
     assert result.is_mock
     assert result.data["summary"]
@@ -59,3 +66,11 @@ def test_api_key_never_reaches_the_log(caplog) -> None:
     assert result.is_mock
     assert secret not in caplog.text
     assert "<redacted>" in caplog.text
+
+
+def test_configured_key_is_used_when_none_is_passed() -> None:
+    """`None` means "fall back to configuration" — the documented behaviour."""
+    from backend.config import settings
+
+    adapter = WeatherAdapter(api_key=None)
+    assert adapter.api_key == settings.openweather_api_key

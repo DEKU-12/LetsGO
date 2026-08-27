@@ -27,6 +27,11 @@ class Settings:
     """Immutable snapshot of the environment."""
 
     anthropic_api_key: str | None = field(default_factory=lambda: _env("ANTHROPIC_API_KEY"))
+    # Identity-linked keys (sk-ant-api03-...) must name the workspace they
+    # act in; workspace-scoped keys do not need this.
+    anthropic_workspace_id: str | None = field(
+        default_factory=lambda: _env("ANTHROPIC_WORKSPACE_ID")
+    )
     groq_api_key: str | None = field(default_factory=lambda: _env("GROQ_API_KEY"))
     llm_provider: str = field(default_factory=lambda: _env("LLM_PROVIDER") or "auto")
     llm_model: str | None = field(default_factory=lambda: _env("LLM_MODEL"))
