@@ -32,9 +32,18 @@ class Settings:
     llm_model: str | None = field(default_factory=lambda: _env("LLM_MODEL"))
 
     openweather_api_key: str | None = field(default_factory=lambda: _env("OPENWEATHER_API_KEY"))
+    opentripmap_api_key: str | None = field(default_factory=lambda: _env("OPENTRIPMAP_API_KEY"))
     google_places_api_key: str | None = field(default_factory=lambda: _env("GOOGLE_PLACES_API_KEY"))
 
+    database_url: str = field(
+        default_factory=lambda: _env("DATABASE_URL") or "sqlite:///./letsgo.db"
+    )
+
     langsmith_api_key: str | None = field(default_factory=lambda: _env("LANGSMITH_API_KEY"))
+    langsmith_tracing: bool = field(
+        default_factory=lambda: (_env("LANGSMITH_TRACING") or "").lower() == "true"
+    )
+    langsmith_project: str = field(default_factory=lambda: _env("LANGSMITH_PROJECT") or "letsgo")
 
     def resolved_provider(self) -> str:
         """Pick a concrete LLM backend.

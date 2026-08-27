@@ -48,8 +48,24 @@ class Adapter(ABC):
             try:
                 return AdapterResult(self._fetch_live(**kwargs), "live", self.name)
             except Exception as exc:  # noqa: BLE001 - degrade, never crash the run
-                log.warning("%s: live call failed (%s); falling back to mock", self.name, exc)
+                log.warning(
+                    "%s: live call failed (%s); falling back to mock",
+                    self.name,
+                    self._redact(exc),
+                )
         return AdapterResult(self._fetch_mock(**kwargs), "mock", self.name)
+
+    def _redact(self, exc: Exception) -> str:
+        """Strip the API key out of an error before it reaches a log.
+
+        HTTP clients put the full request URL in their error messages, and these
+        APIs pass the key as a query parameter — so an unredacted warning leaks
+        the credential into logs, CI output and screenshots.
+        """
+        message = str(exc)
+        if self.api_key:
+            message = message.replace(self.api_key, "<redacted>")
+        return message
 
     @abstractmethod
     def _fetch_live(self, **kwargs: Any) -> Any: ...

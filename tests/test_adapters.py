@@ -36,3 +36,26 @@ def test_live_failure_degrades_to_mock_instead_of_raising() -> None:
 
     assert result.is_mock
     assert result.data == {"ok": True}
+
+
+def test_api_key_never_reaches_the_log(caplog) -> None:
+    """These APIs take the key as a query param, so errors quote it back."""
+    import logging
+
+    secret = "super-secret-key-value"
+
+    class Leaky(Adapter):
+        name = "leaky"
+
+        def _fetch_live(self, **kwargs):
+            raise RuntimeError(f"401 for url https://example.com/x?appid={secret}")
+
+        def _fetch_mock(self, **kwargs):
+            return {"ok": True}
+
+    with caplog.at_level(logging.WARNING):
+        result = Leaky(api_key=secret).fetch()
+
+    assert result.is_mock
+    assert secret not in caplog.text
+    assert "<redacted>" in caplog.text
