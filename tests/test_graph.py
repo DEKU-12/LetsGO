@@ -68,3 +68,37 @@ def test_output_guard_flags_a_missing_plan() -> None:
 
     result = validate_plan({"final_plan": ""})
     assert any("final plan is missing" in e for e in result["errors"])
+
+
+def test_full_trip_routes_through_every_worker(llm: LLM) -> None:
+    state = plan_trip(
+        "5 days in Japan, mid-range budget, love food and history, need hotels and flights",
+        llm,
+    )
+    trace = state["trace"]
+
+    for worker in ("destination_research", "itinerary", "accommodation", "transport"):
+        assert worker in trace, f"{worker} never ran"
+
+    # Dependencies: the itinerary cannot be built before the research exists.
+    assert trace.index("destination_research") < trace.index("itinerary")
+    assert trace.index("aggregator") == len(trace) - 2
+
+
+def test_plan_labels_data_that_came_from_mocks(llm: LLM) -> None:
+    state = plan_trip(
+        "5 days in Japan, mid-range budget, need hotels and flights", llm
+    )
+    plan = state["final_plan"]
+
+    assert "lodging:mock" in state["sources"]
+    assert "not bookable" in plan
+    assert "not quotes" in plan
+
+
+def test_weather_only_question_does_not_book_a_hotel(llm: LLM) -> None:
+    state = plan_trip("What's the weather like in Rome?", llm)
+
+    assert "accommodation" not in state["route_plan"]
+    assert "transport" not in state["route_plan"]
+    assert state["accommodation"] is None

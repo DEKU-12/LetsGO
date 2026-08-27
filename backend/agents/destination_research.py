@@ -143,4 +143,9 @@ def destination_research(state: TravelState, llm: LLM) -> dict[str, Any]:
         sources=sources + [f"llm:{llm.provider}"],
     )
 
-    return {"research": research, "trace": ["destination_research"], "errors": errors}
+    return {
+        "research": research,
+        "sources": sources,
+        "trace": ["destination_research"],
+        "errors": errors,
+    }

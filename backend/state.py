@@ -1,9 +1,4 @@
-"""The typed state every LangGraph node reads from and writes to.
 
-Agents are not independent: each one reads what earlier agents wrote and adds
-its own slice. `trace` records the order agents actually ran, which is what the
-trajectory checks in `eval/` are scored against.
-"""
 
 from __future__ import annotations
 
@@ -121,6 +116,9 @@ class TravelState(TypedDict, total=False):
     final_plan: str | None
 
     # bookkeeping
+    #: "<adapter>:<live|mock>" for every data source touched, so the finished
+    #: plan can say which of its numbers are real.
+    sources: Annotated[list[str], operator.add]
     trace: Annotated[list[str], operator.add]
     errors: Annotated[list[str], operator.add]
     meta: dict[str, Any]
@@ -138,6 +136,7 @@ def new_state(request: str) -> TravelState:
         accommodation=None,
         transport=None,
         final_plan=None,
+        sources=[],
         trace=[],
         errors=[],
         meta={},

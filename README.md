@@ -8,7 +8,8 @@ The part that matters: **a first-class evaluation layer**. The system reports
 whether the supervisor routed to the right agents, whether the final plans are
 any good, and — critically — **how far the LLM judge agrees with a human**.
 
-> Status: in progress. Phase 1 (skeleton graph) is done; see the build phases below.
+> Status: in progress. Phases 1–2 are done — all five agents run end to end.
+> The evaluation layer (phase 3) is next.
 
 ## Run it with zero API keys
 
@@ -33,9 +34,9 @@ request
 parse_request (input guard)  ── unusable? ──▶ clarifying question
   ↓
 supervisor ⇄ destination_research
-           ⇄ itinerary            (phase 2)
-           ⇄ accommodation        (phase 2)
-           ⇄ transport            (phase 2)
+           ⇄ itinerary
+           ⇄ accommodation
+           ⇄ transport
   ↓
 aggregator → validate_plan (output guard) → markdown plan
 ```
@@ -61,13 +62,20 @@ which is what the trajectory checks in `eval/` score.
 - **The final plan is assembled deterministically** from structured state, so
   nothing reaches the user that an agent did not put into state first. The model
   writes only the opening paragraph, from facts already present.
+- **Mock data says it is mock.** Hotels and flights have no live provider —
+  real inventory needs a commercial agreement — so those sections of the plan
+  carry an explicit line saying the numbers are illustrative, and every run
+  ends with the provenance of each data source.
+- **Agents choose, they do not invent.** The itinerary may only schedule
+  attractions the research agent found; accommodation and transport may only
+  pick from the adapter's shortlist. Anything else is dropped and recorded.
 - **Model backends are swappable** (`backend/llm.py`): `anthropic` (spec default),
   `groq` (cheap iteration), `mock` (no keys). Selected automatically.
 
 ## Build phases
 
 1. ✅ Skeleton: structure, `uv` env, one adapter, supervisor + one worker, runs end to end
-2. ⬜ All agents + shared state
+2. ✅ All agents + shared state
 3. ⬜ Eval layer (selection metrics, LLM judge + judge validation, trajectory checks)
 4. ⬜ FastAPI backend with WebSocket progress + storage
 5. ⬜ React (Vite) chat UI

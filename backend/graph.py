@@ -1,14 +1,3 @@
-"""LangGraph wiring.
-
-    START -> parse_request (guard)
-                 |-- unusable request --> END (with a clarifying question)
-                 `-> supervisor <-> worker*  -> aggregator -> validate_plan -> END
-
-The supervisor writes an ordered `route_plan` into state; every worker returns
-to the supervisor, which advances the cursor. That loop is what makes the
-trajectory recorded in `state["trace"]` a real record of what happened rather
-than a fixed pipeline.
-"""
 
 from __future__ import annotations
 
@@ -16,17 +5,31 @@ from typing import Any, Callable
 
 from langgraph.graph import END, START, StateGraph
 
+from backend.agents.accommodation import accommodation
 from backend.agents.aggregator import aggregator
 from backend.agents.destination_research import destination_research
+from backend.agents.itinerary import itinerary
 from backend.agents.supervisor import supervisor
+from backend.agents.transport import transport
 from backend.guards import parse_request, validate_plan
 from backend.llm import LLM
-from backend.state import AGGREGATOR, RESEARCH, TravelState, new_state
+from backend.state import (
+    ACCOMMODATION,
+    AGGREGATOR,
+    ITINERARY,
+    RESEARCH,
+    TRANSPORT,
+    TravelState,
+    new_state,
+)
 
 #: Worker nodes this graph can dispatch to, in canonical dependency order.
-#: Phase 2 adds itinerary, accommodation and transport here.
+#: The supervisor may route to any subset of these; the aggregator always runs.
 WORKER_NODES: dict[str, Callable[[TravelState, LLM], dict[str, Any]]] = {
     RESEARCH: destination_research,
+    ITINERARY: itinerary,
+    ACCOMMODATION: accommodation,
+    TRANSPORT: transport,
 }
 
 

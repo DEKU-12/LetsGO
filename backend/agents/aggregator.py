@@ -58,6 +58,9 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
     params = state["params"]
     assert params is not None
 
+    sources = sorted(set(state.get("sources") or []))
+    mocked = {s.split(":")[0] for s in sources if s.endswith(":mock")}
+
     research = state.get("research")
     itinerary = state.get("itinerary")
     accommodation = state.get("accommodation")
@@ -100,11 +103,14 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
         lines.append("")
         if research.weather:
             w = research.weather
-            temps = (
-                f" Typical range {w.avg_low_c:.0f}–{w.avg_high_c:.0f}°C."
-                if w.avg_high_c is not None and w.avg_low_c is not None
-                else ""
-            )
+            temps = ""
+            if w.avg_high_c is not None and w.avg_low_c is not None:
+                low, high = round(w.avg_low_c), round(w.avg_high_c)
+                temps = (
+                    f" Around {high}°C."
+                    if low == high
+                    else f" Typical range {low}–{high}°C."
+                )
             lines += [f"**Weather.** {w.summary}{temps} {w.advice}".strip(), ""]
         if research.attractions:
             lines.append("**Worth your time**")
@@ -138,6 +144,12 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
                 f"Target nightly spend: {_fmt_money(accommodation.nightly_budget_usd)}.",
                 "",
             ]
+        if "lodging" in mocked:
+            lines += [
+                "_No live hotel inventory is connected — these properties and "
+                "prices are illustrative, not bookable._",
+                "",
+            ]
         lines += ["| Option | Area | Per night | Rating | Why |", "| --- | --- | --- | --- | --- |"]
         for o in accommodation.options:
             rating = f"{o.rating:.1f}" if o.rating else "—"
@@ -148,6 +160,12 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
 
     if transport and (transport.inbound or transport.local):
         lines += ["## Getting there and around", ""]
+        if "transport" in mocked:
+            lines += [
+                "_No live fare data is connected — costs below are typical bands, "
+                "not quotes._",
+                "",
+            ]
         if transport.inbound:
             lines += ["**Getting there**", ""]
             for leg in transport.inbound:
@@ -161,8 +179,7 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
                 lines.append(f"- **{leg.mode}** — {leg.description}{cost}")
             lines.append("")
 
-    provenance = sorted({s for s in (research.sources if research else []) if s})
-    if provenance:
-        lines += ["---", "", f"_Data sources: {', '.join(provenance)}._"]
+    if sources:
+        lines += ["---", "", f"_Data sources: {', '.join(sources)}._"]
 
     return {"final_plan": "\n".join(lines).strip(), "trace": ["aggregator"], "errors": errors}
