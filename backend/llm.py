@@ -22,7 +22,9 @@ from backend.config import settings
 
 DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-5",
-    "groq": "llama-3.3-70b-versatile",
+    # Groq retired the Llama 3.3 endpoints; gpt-oss-120b is the current
+    # free-tier model that follows JSON instructions reliably.
+    "groq": "openai/gpt-oss-120b",
     "mock": "mock-deterministic",
 }
 
