@@ -88,14 +88,19 @@ def build_graph(llm: LLM | None = None):
     return graph.compile()
 
 
-def plan_trip(request: str, llm: LLM | None = None) -> TravelState:
-    """Run one request end to end and return the final state."""
+def plan_trip(
+    request: str, llm: LLM | None = None, profile: list[str] | None = None
+) -> TravelState:
+    """Run one request end to end and return the final state.
+
+    `profile` is the traveller's saved preferences, if any.
+    """
     llm = llm or LLM()
-    return build_graph(llm).invoke(new_state(request))
+    return build_graph(llm).invoke(new_state(request, profile))
 
 
 def stream_trip(
-    request: str, llm: LLM | None = None
+    request: str, llm: LLM | None = None, profile: list[str] | None = None
 ) -> Iterator[tuple[str, dict[str, Any], TravelState]]:
     """Run a request, yielding after each node so callers can show progress.
 
@@ -105,7 +110,7 @@ def stream_trip(
     works is indistinguishable from a slow one.
     """
     llm = llm or LLM()
-    state: TravelState = new_state(request)
+    state: TravelState = new_state(request, profile)
 
     for step in build_graph(llm).stream(state, stream_mode="updates"):
         for node, update in step.items():

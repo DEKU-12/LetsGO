@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.llm import LLM, LLMError, register_mock
-from backend.state import ActivityBlock, ItineraryDay, ItineraryOutput, TravelState
+from backend.state import ActivityBlock, ItineraryDay, ItineraryOutput, TravelState, profile_note
 
 #: A day of sightseeing before it stops being a holiday.
 HOURS_PER_DAY = 6.5
@@ -120,6 +120,7 @@ def itinerary(state: TravelState, llm: LLM) -> dict[str, Any]:
                 f"Travellers: {params.travelers}\n"
                 f"Interests: {', '.join(params.preferences) or 'none stated'}\n\n"
                 f"Attractions available:\n{listing}"
+                f"{profile_note(state)}"
                 f"{redo}"
             ),
             context={

@@ -1,6 +1,23 @@
 import { useCallback, useRef, useState } from "react";
 import type { EditResponse, PlanResult, RouteStep, ServerEvent } from "./types";
 
+/**
+ * An anonymous id for this browser, so saved preferences can be found again.
+ * There are no accounts; clearing site data simply starts a new profile.
+ */
+export const USER_ID: string | null = (() => {
+  try {
+    let id = localStorage.getItem("letsgo-user");
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem("letsgo-user", id);
+    }
+    return id;
+  } catch {
+    return null; // storage blocked: plan without remembering anything
+  }
+})();
+
 /** One entry in the live progress list. */
 export interface Step {
   agent: string;
@@ -57,7 +74,7 @@ export function usePlanner() {
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/plan`);
     socket.current = ws;
 
-    ws.onopen = () => ws.send(JSON.stringify({ request }));
+    ws.onopen = () => ws.send(JSON.stringify({ request, user_id: USER_ID }));
 
     ws.onmessage = (event) => {
       const message: ServerEvent = JSON.parse(event.data);

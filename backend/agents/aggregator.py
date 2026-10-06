@@ -96,8 +96,11 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
     if research:
         lines.append("## The destination")
         lines.append("")
-        if research.weather:
-            w = research.weather
+        # One line per city the research agent checked, or just the one.
+        outlooks = research.city_weather if len(research.city_weather) > 1 else (
+            {"": research.weather} if research.weather else {}
+        )
+        for city, w in outlooks.items():
             temps = ""
             if w.avg_high_c is not None and w.avg_low_c is not None:
                 low, high = round(w.avg_low_c), round(w.avg_high_c)
@@ -106,7 +109,8 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
                     if low == high
                     else f" Typical range {low}–{high}°C."
                 )
-            lines += [f"**Weather.** {w.summary}{temps} {w.advice}".strip(), ""]
+            label = f"Weather in {city}." if city else "Weather."
+            lines += [f"**{label}** {w.summary}{temps} {w.advice}".strip(), ""]
         if research.attractions:
             lines.append("**Worth your time**")
             lines.append("")

@@ -118,6 +118,20 @@ class AgentRun(Base):
     trip: Mapped[Trip] = relationship(back_populates="runs")
 
 
+class Profile(Base):
+    """Preferences a traveller asked us to remember, keyed by an anonymous id.
+
+    The id is a random string the browser makes up; there are no accounts. A
+    preference is only stored after the traveller says yes to it.
+    """
+
+    __tablename__ = "profiles"
+
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    preferences: Mapped[list[str]] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
 _engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
@@ -213,3 +227,20 @@ def load_state(trip_id: int) -> TravelState | None:
         if trip is None or trip.state is None:
             return None
         return _STATE.validate_python(trip.state)
+
+
+def get_profile(user_id: str) -> list[str]:
+    with session_scope() as session:
+        profile = session.get(Profile, user_id)
+        return list(profile.preferences) if profile else []
+
+
+def set_profile(user_id: str, preferences: list[str]) -> list[str]:
+    """Replace a traveller's saved preferences. An empty list forgets them all."""
+    with session_scope() as session:
+        profile = session.get(Profile, user_id)
+        if profile is None:
+            profile = Profile(user_id=user_id, preferences=[])
+            session.add(profile)
+        profile.preferences = list(preferences)
+        return list(profile.preferences)

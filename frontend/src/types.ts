@@ -18,6 +18,10 @@ export interface PlanResult {
   /** How many days the schedule has; 0 when there is no schedule. */
   days: number;
   duration_s?: number;
+  /** Preferences that were applied to this plan. */
+  profile?: string[];
+  /** Lasting preferences found in the request, offered (not saved) to remember. */
+  suggested_preferences?: string[];
   /** Set on a version made by an edit: the trip it was edited from. */
   parent_id?: number;
   edited?: {

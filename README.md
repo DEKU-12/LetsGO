@@ -78,6 +78,24 @@ been in the code since phase 1, passed every unit test, and was invisible in
 manual testing. The eval layer found it on its first run — which is the argument
 for building evaluation early rather than last.
 
+**Tool calls are scored, not assumed.** The research agent chooses its own
+lookups — weather for the cities the trip covers, and map checks on places it
+is unsure of (`uv run python -m eval.tools`). On 7 labelled requests, Groq
+`gpt-oss-120b` (Oct 2026):
+
+| Metric | Result |
+| --- | --- |
+| Weather fetched for the right cities | **9/10** (missed Venice on a three-city Italy trip) |
+| Invalid calls (unknown tool, bad arguments) | 0 of 19 |
+| Duplicate calls | 1 (the same place checked twice) |
+| Times code had to fetch weather the model skipped | 0 of 7 |
+| Places kept after the model's own check rejected them | 0 |
+
+The baseline is the fixed call this replaced, which only ever asked about the
+destination as typed: the mock backend reproduces it and scores 5/10, missing
+every second city. Seven cases is small; read this as "works, with one known
+miss", not a rate.
+
 **Places are verified, not trusted.** Every attraction the model recommends is
 checked against Geoapify — does a place by that name exist at that destination?
 The verifier itself is benchmarked (`uv run python -m eval.places_benchmark`):
@@ -138,6 +156,9 @@ which is what the trajectory checks in `eval/` score.
 | `eval/trajectory.py` | Dependency order, unused output, repaired routes |
 | `eval/run.py` | The report |
 | `eval/places_benchmark.py` | Error rate of the place verifier itself |
+| `eval/tools.py` | Research agent tool calls: right tool and city, invalid, duplicate, fallbacks |
+| `backend/preferences.py` | Finds lasting preferences (diet, kids, pace) in a request, to offer remembering |
+| `eval/preferences.py` | Preference extraction: lasting ones caught, trip-only details leaked |
 | `eval/grade.py` | Grade plans by hand, to validate the judge |
 | `eval/edits.py` | Plan edits: right section and days, change made, other days untouched |
 | `backend/edit.py` | Change a finished plan by chatting: reruns one agent, keeps unmentioned days as they were. Trip-day help: checks live weather and rearranges today if it is bad |
@@ -159,6 +180,18 @@ which is what the trajectory checks in `eval/` score.
   "Getting there and around" gives practical guidance — no invented hotel
   names, prices or fares. Every run ends with the provenance of each data
   source.
+- **Tool calling where it adds flexibility, fixed calls where correctness
+  matters.** The research agent decides what to look up (`LLM.run_tools`), and
+  every call is logged for evaluation. What must always happen does not depend
+  on the model: weather is fetched anyway if it never asks, and every
+  recommended place is map-verified afterwards in code.
+- **Remembering asks first.** After a plan, lasting preferences in the
+  request ("vegetarian", "travels with kids") are offered, not saved; the
+  traveller keeps the ones they want, sees them as tags, and can delete any.
+  There are no accounts — a random id in the browser. Trip-only details ("my
+  mum's birthday", "tight budget this time") should never be offered, and
+  `eval/preferences.py` measures that: 7/7 lasting caught, 0/9 requests leaked
+  a trip-only detail (Groq, Oct 2026, 9 cases).
 - **Agents choose, they do not invent.** The itinerary may only schedule
   attractions the research agent found. Places the model names — attractions
   and neighbourhoods — are verified against a map dataset.

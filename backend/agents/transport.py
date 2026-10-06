@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.llm import LLM, LLMError, register_mock
-from backend.state import TransportOutput, TransportTip, TravelState
+from backend.state import TransportOutput, TransportTip, TravelState, profile_note
 
 TRANSPORT_SYSTEM = """You advise on travel to and around a destination.
 
@@ -64,6 +64,7 @@ def transport(state: TravelState, llm: LLM) -> dict[str, Any]:
                 f"Trip length: {params.duration_days or 'unspecified'} days\n"
                 f"Travellers: {params.travelers}\n"
                 f"Places in their schedule: {', '.join(stops[:20]) or 'not planned yet'}"
+                f"{profile_note(state)}"
                 f"{_change(state)}"
             ),
             context={"destination": params.destination},

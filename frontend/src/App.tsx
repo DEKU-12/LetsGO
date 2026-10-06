@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { marked } from "marked";
-import { usePlanner } from "./usePlanner";
+import { USER_ID, usePlanner } from "./usePlanner";
 import type { Health, PlanResult } from "./types";
 
 const EDIT_EXAMPLES = [
@@ -19,13 +19,38 @@ export default function App() {
   const planner = usePlanner();
   const [request, setRequest] = useState("");
   const [health, setHealth] = useState<Health | null>(null);
+  // Preferences this browser asked us to remember, and suggestions turned down.
+  const [profile, setProfile] = useState<string[]>([]);
+  const [declined, setDeclined] = useState<string[]>([]);
 
   useEffect(() => {
     fetch("/api/health")
       .then((r) => r.json())
       .then(setHealth)
       .catch(() => setHealth(null));
+    if (USER_ID) {
+      fetch(`/api/profile/${USER_ID}`)
+        .then((r) => r.json())
+        .then((body) => setProfile(body.preferences ?? []))
+        .catch(() => setProfile([]));
+    }
   }, []);
+
+  function saveProfile(preferences: string[]) {
+    if (!USER_ID) return;
+    fetch(`/api/profile/${USER_ID}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preferences }),
+    })
+      .then((r) => r.json())
+      .then((body) => setProfile(body.preferences ?? preferences))
+      .catch(() => undefined);
+  }
+
+  const suggestions = (planner.result?.suggested_preferences ?? []).filter(
+    (p) => !profile.includes(p) && !declined.includes(p),
+  );
 
   const busy = planner.status === "planning" || planner.editing;
 
@@ -84,6 +109,24 @@ export default function App() {
         </div>
       </form>
 
+      {profile.length > 0 && (
+        <div className="profile">
+          <span>Remembered about you:</span>
+          {profile.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className="chip saved"
+              title="Forget this"
+              aria-label={`Forget "${p}"`}
+              onClick={() => saveProfile(profile.filter((x) => x !== p))}
+            >
+              {p} ×
+            </button>
+          ))}
+        </div>
+      )}
+
       {planner.status !== "idle" && (
         <Progress
           steps={planner.steps}
@@ -97,6 +140,30 @@ export default function App() {
       {planner.result?.clarification && (
         <div className="clarify">
           <strong>One question first:</strong> {planner.result.clarification}
+        </div>
+      )}
+
+      {suggestions.length > 0 && (
+        <div className="profile remember">
+          <span>Remember for next time?</span>
+          {suggestions.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className="chip"
+              aria-label={`Remember "${p}"`}
+              onClick={() => saveProfile([...profile, p])}
+            >
+              + {p}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="chip"
+            onClick={() => setDeclined((d) => [...d, ...suggestions])}
+          >
+            No thanks
+          </button>
         </div>
       )}
 

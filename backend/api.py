@@ -12,10 +12,12 @@ show the team working.
 
 from __future__ import annotations
 
+import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from datetime import date
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,11 +28,22 @@ from starlette.concurrency import run_in_threadpool
 
 from backend.adapters.weather import WeatherAdapter
 from backend.config import PROJECT_ROOT
-from backend.db import get_trip, init_db, list_trips, load_state, save_trip
+from backend.db import (
+    get_profile,
+    get_trip,
+    init_db,
+    list_trips,
+    load_state,
+    save_trip,
+    set_profile,
+)
 from backend.edit import check_today, edit_trip, trip_day
 from backend.graph import WORKER_NODES, plan_trip, stream_trip
 from backend.llm import LLM, LLMError
+from backend.preferences import MAX_LENGTH, MAX_PREFERENCES, clean, suggest_preferences
 from backend.state import AGGREGATOR, TravelState
+
+log = logging.getLogger(__name__)
 
 #: What each node is doing, in words a person would use.
 AGENT_LABELS: dict[str, str] = {
@@ -48,10 +61,22 @@ AGENT_LABELS: dict[str, str] = {
 #: Long enough for a real trip on a slow model, short enough to fail visibly.
 MAX_REQUEST_CHARS = 2000
 
+#: The anonymous id a browser makes for itself (a UUID). Anything else is
+#: refused, so the id cannot be used to probe or stuff the profiles table.
+USER_ID = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
 
 class PlanRequest(BaseModel):
     request: str = Field(min_length=1, max_length=MAX_REQUEST_CHARS)
     provider: str | None = None
+    #: Anonymous browser id; its saved preferences are applied to the plan.
+    user_id: str | None = Field(default=None, pattern=USER_ID.pattern)
+
+
+class ProfileUpdate(BaseModel):
+    preferences: list[Annotated[str, Field(max_length=MAX_LENGTH)]] = Field(
+        max_length=MAX_PREFERENCES
+    )
 
 
 class EditRequest(BaseModel):
@@ -124,14 +149,34 @@ async def create_plan(body: PlanRequest) -> dict[str, Any]:
     except LLMError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    profile = await run_in_threadpool(get_profile, body.user_id) if body.user_id else []
     started = time.monotonic()
-    state = await run_in_threadpool(plan_trip, body.request, llm)
+    state = await run_in_threadpool(plan_trip, body.request, llm, profile)
     elapsed = time.monotonic() - started
 
     trip_id = await run_in_threadpool(
         save_trip, state, provider=llm.provider, model=llm.model, duration_s=elapsed
     )
     return _result(state, trip_id)
+
+
+@app.get("/api/profile/{user_id}")
+def read_profile(user_id: str) -> dict[str, Any]:
+    """The preferences this browser asked us to remember."""
+    _check_user_id(user_id)
+    return {"preferences": get_profile(user_id)}
+
+
+@app.put("/api/profile/{user_id}")
+def update_profile(user_id: str, body: ProfileUpdate) -> dict[str, Any]:
+    """Replace the saved preferences: used both to remember one and to forget one."""
+    _check_user_id(user_id)
+    return {"preferences": set_profile(user_id, clean(body.preferences))}
+
+
+def _check_user_id(user_id: str) -> None:
+    if not USER_ID.match(user_id):
+        raise HTTPException(status_code=422, detail="invalid user id")
 
 
 @app.get("/api/trips")
@@ -276,6 +321,10 @@ async def plan_socket(websocket: WebSocket) -> None:
         await websocket.close()
         return
 
+    user_id = payload.get("user_id")
+    user_id = user_id if isinstance(user_id, str) and USER_ID.match(user_id) else None
+    profile = await run_in_threadpool(get_profile, user_id) if user_id else []
+
     await websocket.send_json({
         "type": "started",
         "provider": llm.provider,
@@ -287,7 +336,7 @@ async def plan_socket(websocket: WebSocket) -> None:
     state: dict[str, Any] = {}
 
     try:
-        stream = stream_trip(request, llm)
+        stream = stream_trip(request, llm, profile)
         while True:
             step = await run_in_threadpool(lambda: next(stream, None))
             if step is None:
@@ -325,6 +374,18 @@ async def plan_socket(websocket: WebSocket) -> None:
     result = _result(state, trip_id)
     result["duration_s"] = round(elapsed, 1)
     result["type"] = "clarification" if state.get("clarification") else "done"
+    result["profile"] = profile
+
+    # Offer to remember lasting preferences from this request. Never saved
+    # here: the traveller says yes to each one. A failure only loses the offer.
+    result["suggested_preferences"] = []
+    if user_id and not state.get("clarification"):
+        try:
+            result["suggested_preferences"] = await run_in_threadpool(
+                suggest_preferences, request, llm, profile
+            )
+        except LLMError as exc:
+            log.warning("preference suggestions skipped: %s", exc)
 
     await websocket.send_json(result)
     await websocket.close()

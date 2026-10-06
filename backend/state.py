@@ -58,6 +58,9 @@ class ResearchOutput(BaseModel):
     destination: str
     attractions: list[Attraction] = Field(default_factory=list)
     weather: WeatherOutlook | None = None
+    #: Outlook per city the research agent chose to check, for trips that
+    #: cover several (Tokyo and Kyoto). `weather` is the first of these.
+    city_weather: dict[str, WeatherOutlook] = Field(default_factory=dict)
     practical_notes: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
 
@@ -112,6 +115,9 @@ class TravelState(TypedDict, total=False):
 
     # input
     request: str
+    #: Lasting preferences the traveller asked us to remember (vegetarian,
+    #: travels with kids). Every agent that plans something reads them.
+    profile: list[str]
 
     # guards + supervisor
     params: TripParams | None
@@ -147,9 +153,16 @@ class TravelState(TypedDict, total=False):
     meta: dict[str, Any]
 
 
-def new_state(request: str) -> TravelState:
+def profile_note(state: TravelState) -> str:
+    """The traveller's saved preferences, as a line for an agent's prompt."""
+    profile = state.get("profile") or []
+    return f"\nAlways true for this traveller: {'; '.join(profile)}" if profile else ""
+
+
+def new_state(request: str, profile: list[str] | None = None) -> TravelState:
     return TravelState(
         request=request,
+        profile=list(profile or []),
         params=None,
         route_plan=[],
         cursor=0,

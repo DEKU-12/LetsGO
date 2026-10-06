@@ -1,8 +1,21 @@
 """Destination Research agent — what the place is like.
 
-Pulls weather through the weather adapter, asks the model for attractions and
-practical notes, and writes a :class:`ResearchOutput` into shared state. Every
-later agent reads from this, so it runs first whenever it runs at all.
+The one agent that uses tool calling: the model decides what to look up.
+
+* ``get_weather(city)`` — the model picks the cities. A trip "covering Tokyo
+  and Kyoto" gets weather for both, where a fixed call could only ask about
+  "Japan".
+* ``check_place(name, city)`` — the model can confirm a place it is unsure of
+  before recommending it, and pick another if it cannot be found.
+
+What the model decides is flexible; what must always happen is not left to it.
+If it never checks the weather, the destination's weather is fetched anyway,
+and every place it recommends is still verified against the map afterwards —
+that check is the project's guarantee, so it stays in code. Every tool call is
+logged in ``meta["tool_calls"]`` for ``eval/tools.py``.
+
+Writes a :class:`ResearchOutput` into shared state. Every later agent reads
+from this, so it runs first whenever it runs at all.
 """
 
 from __future__ import annotations
@@ -11,11 +24,19 @@ from typing import Any
 
 from backend.adapters.places import PlacesAdapter
 from backend.adapters.weather import WeatherAdapter
-from backend.llm import LLM, LLMError, register_mock
-from backend.state import Attraction, ResearchOutput, TravelState, WeatherOutlook
+from backend.llm import LLM, LLMError, Tool, register_mock, register_mock_tool_calls
+from backend.state import Attraction, ResearchOutput, TravelState, WeatherOutlook, profile_note
 
 RESEARCH_SYSTEM = """You are a destination researcher. Given a place and a traveller's
 interests, list what is genuinely worth their time.
+
+You have tools:
+- get_weather(city): the weather outlook for one city. Call it for each main
+  city the trip covers (at most 3). For a country, pick the city they will
+  spend most time in.
+- check_place(name, city): whether a place can be found on a map. Use it on
+  places you are not sure of (at most 4 calls). If one comes back
+  "exists": false, leave it out and choose another.
 
 Return JSON:
   {"attractions": [{"name": str, "category": str, "description": str, "est_hours": number}],
@@ -77,6 +98,11 @@ _CITY_HINTS = {
 }
 
 
+@register_mock_tool_calls("destination_research")
+def _mock_tool_calls(context: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{"name": "get_weather", "args": {"city": context.get("destination", "")}}]
+
+
 @register_mock("destination_research")
 def _mock_research(context: dict[str, Any]) -> dict[str, Any]:
     destination = str(context.get("destination", "")).lower()
@@ -108,26 +134,62 @@ def destination_research(state: TravelState, llm: LLM) -> dict[str, Any]:
     params = state["params"]
     assert params is not None  # the guard node runs first
 
-    weather_result = WeatherAdapter().fetch(destination=params.destination)
-    sources = [f"{weather_result.provider}:{weather_result.source}"]
+    sources: set[str] = set()
+    city_weather: dict[str, WeatherOutlook] = {}
 
+    def get_weather(city: str) -> dict[str, Any]:
+        result = WeatherAdapter().fetch(destination=city)
+        sources.add(f"{result.provider}:{result.source}")
+        city_weather[city] = WeatherOutlook(**result.data)
+        return result.data
+
+    def check_place(name: str, city: str) -> dict[str, Any]:
+        result = PlacesAdapter().fetch(destination=city, names=[name])
+        if result.is_mock:
+            return {"exists": None, "note": "no map data available; use your judgement"}
+        sources.add(f"{result.provider}:{result.source}")
+        matched = result.data["confirmed"].get(name)
+        return {"exists": matched is not None, "matched_name": matched}
+
+    tools = [
+        Tool("get_weather", "Weather outlook for one city over the next few days.",
+             {"type": "object", "properties": {"city": {"type": "string"}},
+              "required": ["city"]},
+             get_weather),
+        Tool("check_place", "Whether a named place can be found on a map near a city.",
+             {"type": "object",
+              "properties": {"name": {"type": "string"}, "city": {"type": "string"}},
+              "required": ["name", "city"]},
+             check_place),
+    ]
+
+    calls: list[dict[str, Any]] = []
     try:
-        raw = llm.json(
+        raw, calls = llm.run_tools(
             task="destination_research",
             system=RESEARCH_SYSTEM,
             prompt=(
                 f"Destination: {params.destination}\n"
                 f"Trip length: {params.duration_days or 'unspecified'} days\n"
                 f"Interests: {', '.join(params.preferences) or 'none stated'}\n"
-                f"Travellers: {params.travelers}"
+                f"Travellers: {params.travelers}\n"
+                f"Request in their words: {state.get('request', '')}"
+                f"{profile_note(state)}"
             ),
+            tools=tools,
             context={"destination": params.destination, "preferences": params.preferences},
-            max_tokens=2048,
+            max_tokens=4096,
         )
         errors: list[str] = []
     except LLMError as exc:
         raw = {"attractions": [], "practical_notes": []}
         errors = [f"destination_research: {exc}"]
+
+    # The plan always gets a weather section: if the model never asked, ask.
+    if not city_weather:
+        get_weather(params.destination)
+        calls.append({"name": "get_weather", "args": {"city": params.destination},
+                      "ok": True, "fallback": True})
 
     attractions = []
     for item in raw.get("attractions") or []:
@@ -150,7 +212,7 @@ def destination_research(state: TravelState, llm: LLM) -> dict[str, Any]:
         )
         confirmed = places.data["confirmed"]
         if not places.is_mock:
-            sources.append(f"{places.provider}:{places.source}")
+            sources.add(f"{places.provider}:{places.source}")
             coords = places.data.get("coords") or {}
             for attraction in locatable:
                 attraction.verified = confirmed.get(attraction.name) is not None
@@ -160,14 +222,19 @@ def destination_research(state: TravelState, llm: LLM) -> dict[str, Any]:
     research = ResearchOutput(
         destination=params.destination,
         attractions=attractions,
-        weather=WeatherOutlook(**weather_result.data),
+        weather=next(iter(city_weather.values())),
+        city_weather=city_weather,
         practical_notes=[str(n) for n in raw.get("practical_notes") or []],
-        sources=sources + [f"llm:{llm.provider}"],
+        sources=sorted(sources) + [f"llm:{llm.provider}"],
     )
+
+    meta = dict(state.get("meta") or {})
+    meta["tool_calls"] = {**meta.get("tool_calls", {}), "destination_research": calls}
 
     return {
         "research": research,
-        "sources": sources,
+        "sources": sorted(sources),
+        "meta": meta,
         "trace": ["destination_research"],
         "errors": errors,
     }

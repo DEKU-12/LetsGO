@@ -17,7 +17,7 @@ from typing import Any
 
 from backend.adapters.places import PlacesAdapter
 from backend.llm import LLM, LLMError, register_mock
-from backend.state import AccommodationOutput, StayArea, TravelState
+from backend.state import AccommodationOutput, StayArea, TravelState, profile_note
 
 ACCOMMODATION_SYSTEM = """You advise a traveller on which neighbourhoods to stay in.
 
@@ -98,6 +98,7 @@ def accommodation(state: TravelState, llm: LLM) -> dict[str, Any]:
                 f"Travellers: {params.travelers}\n"
                 f"Interests: {', '.join(params.preferences) or 'none stated'}\n"
                 f"Places they plan to visit: {', '.join(anchors[:20]) or 'not planned yet'}"
+                f"{profile_note(state)}"
                 f"{_change(state)}"
             ),
             context={"destination": params.destination},

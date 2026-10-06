@@ -204,6 +204,23 @@ textarea:disabled { opacity: 0.6; }
 }
 .edit input:disabled { opacity: 0.6; }
 
+.profile {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.chip.saved { color: var(--ink); border-color: var(--accent); }
+.remember {
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
 .today {
   display: flex;
   gap: 0.6rem;
