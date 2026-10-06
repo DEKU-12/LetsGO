@@ -294,8 +294,9 @@ async def plan_socket(websocket: WebSocket) -> None:
     """Stream a run, one event per agent.
 
     Protocol — client sends ``{"request": "...", "provider": null}``, then
-    receives ``started``, any number of ``route``/``agent`` events, and finally
-    exactly one of ``done``, ``clarification`` or ``error``.
+    receives ``started``, any number of ``route``/``agent`` events, then exactly
+    one of ``done``, ``clarification`` or ``error``. After ``done``, a
+    ``suggestions`` message may follow with preferences to offer remembering.
     """
     await websocket.accept()
 
@@ -376,18 +377,21 @@ async def plan_socket(websocket: WebSocket) -> None:
     result["type"] = "clarification" if state.get("clarification") else "done"
     result["profile"] = profile
 
-    # Offer to remember lasting preferences from this request. Never saved
-    # here: the traveller says yes to each one. A failure only loses the offer.
-    result["suggested_preferences"] = []
+    # The plan goes out the moment it is ready; nothing optional holds it up.
+    await websocket.send_json(result)
+
+    # Then offer to remember lasting preferences from this request, as a
+    # separate message. Never saved here: the traveller says yes to each one.
+    # A failure, or the client leaving first, only loses the offer.
     if user_id and not state.get("clarification"):
         try:
-            result["suggested_preferences"] = await run_in_threadpool(
-                suggest_preferences, request, llm, profile
-            )
+            suggestions = await run_in_threadpool(suggest_preferences, request, llm, profile)
+            if suggestions:
+                await websocket.send_json({"type": "suggestions", "preferences": suggestions})
         except LLMError as exc:
             log.warning("preference suggestions skipped: %s", exc)
-
-    await websocket.send_json(result)
+        except WebSocketDisconnect:
+            return
     await websocket.close()
 
 

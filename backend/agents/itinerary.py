@@ -9,8 +9,10 @@ can be held to.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
+from backend.hours import DAY_NAMES
 from backend.llm import LLM, LLMError, register_mock
 from backend.state import ActivityBlock, ItineraryDay, ItineraryOutput, TravelState, profile_note
 
@@ -35,7 +37,9 @@ Rules:
 - Group stops that are near each other on the same day; do not bounce across a
   city and back.
 - "theme" is a short phrase describing the day, e.g. "Old town and market food".
-- "detail" is one practical sentence: what to book, when to arrive, what to skip."""
+- "detail" is one practical sentence: what to book, when to arrive, what to skip.
+- Where opening hours are given, visit within them; on dated trips, avoid days a
+  place is closed."""
 
 _SLOTS = ("09:00", "11:30", "13:00", "14:30", "17:00", "Evening")
 
@@ -78,6 +82,17 @@ def _mock_itinerary(context: dict[str, Any]) -> dict[str, Any]:
     return {"days": days}
 
 
+def _weekdays(start_date: str | None, days: int) -> str:
+    """'Day 1 is a Monday, ...' when the trip has dates, so the model can
+    respect opening days. Empty otherwise."""
+    try:
+        start = date.fromisoformat(start_date or "")
+    except ValueError:
+        return ""
+    names = [DAY_NAMES[(start + timedelta(days=i)).weekday()] for i in range(days)]
+    return "\nWeekdays: " + ", ".join(f"day {i} is a {n}" for i, n in enumerate(names, 1))
+
+
 def itinerary(state: TravelState, llm: LLM) -> dict[str, Any]:
     """Graph node: build the day-by-day schedule."""
     params = state["params"]
@@ -95,8 +110,12 @@ def itinerary(state: TravelState, llm: LLM) -> dict[str, Any]:
         }
 
     listing = "\n".join(
-        f"- {a.name} ({a.category}, ~{a.est_hours:g}h): {a.description}" for a in attractions
+        f"- {a.name} ({a.category}, ~{a.est_hours:g}h"
+        + (f", open {a.opening_hours}" if a.opening_hours else "")
+        + f"): {a.description}"
+        for a in attractions
     )
+    weekdays = _weekdays(params.start_date, days_wanted)
 
     # A redo — after the schedule check failed, or because the traveller asked
     # for a change: show the draft and what to change.
@@ -120,6 +139,7 @@ def itinerary(state: TravelState, llm: LLM) -> dict[str, Any]:
                 f"Travellers: {params.travelers}\n"
                 f"Interests: {', '.join(params.preferences) or 'none stated'}\n\n"
                 f"Attractions available:\n{listing}"
+                f"{weekdays}"
                 f"{profile_note(state)}"
                 f"{redo}"
             ),

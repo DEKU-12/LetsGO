@@ -15,18 +15,20 @@ Checks:
 * **repeated stop** — the same attraction booked on two days.
 * **too spread out** — one day's stops are far apart on the map. Only runs for
   places the verifier located, so it is silent on the mock backend.
-
-Opening hours are not checked: the geocoder used for verification does not
-return them, and a per-place details lookup is a separate API call per stop.
+* **outside opening hours** — a visit scheduled at a clock time the place is
+  shut, or (on a trip with a start date) on a weekday it is closed. Only for
+  hours read with certainty (see ``backend/hours.py``); unreadable hours and
+  slots like "Evening" are not judged.
 """
 
 from __future__ import annotations
 
-import math
+from datetime import date, timedelta
 from typing import Any
 
-from backend.adapters.places import name_variants, names_match
+from backend.adapters.places import distance_km, name_variants, names_match
 from backend.agents.itinerary import DEFAULT_DAYS
+from backend.hours import DAY_NAMES, clock, open_at, parse
 from backend.state import Attraction, TravelState
 
 #: How many times the itinerary agent may redo the schedule.
@@ -54,14 +56,29 @@ def match_attraction(title: str, attractions: list[Attraction]) -> Attraction | 
     return None
 
 
-def _km(a: Attraction, b: Attraction) -> float:
-    """Great-circle distance in kilometres."""
-    lat1, lon1, lat2, lon2 = map(math.radians, (a.lat, a.lon, b.lat, b.lon))
-    h = (
-        math.sin((lat2 - lat1) / 2) ** 2
-        + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
-    )
-    return 2 * 6371.0 * math.asin(math.sqrt(h))
+def _hours_problems(
+    day: int, blocks: list[Any], attractions: list[Attraction], weekday: int | None
+) -> list[str]:
+    """Visits on this day at a time, or on a weekday, the place is shut."""
+    problems: list[str] = []
+    for block in blocks:
+        place = match_attraction(block.title, attractions)
+        week = parse(place.opening_hours) if place else None
+        if not week:
+            continue
+        if weekday is not None and week.get(weekday) == []:
+            problems.append(
+                f"{place.name} is closed on {DAY_NAMES[weekday]}s, the weekday of day {day}. "
+                "Move it to another day."
+            )
+            continue
+        minute = clock(block.time)
+        if minute is not None and open_at(week, weekday, minute) is False:
+            problems.append(
+                f"{place.name} is scheduled at {block.time} on day {day}, outside its "
+                f"opening hours ({place.opening_hours}). Move it within them."
+            )
+    return problems
 
 
 def find_problems(state: TravelState) -> list[str]:
@@ -81,6 +98,11 @@ def find_problems(state: TravelState) -> list[str]:
             f"Only {len(itinerary.days)} of {days_wanted} days were planned. "
             f"Plan all {days_wanted} days."
         )
+
+    try:
+        start = date.fromisoformat(params.start_date or "")
+    except ValueError:
+        start = None
 
     first_seen: dict[str, int] = {}
     for day in itinerary.days:
@@ -108,8 +130,11 @@ def find_problems(state: TravelState) -> list[str]:
                 )
             first_seen.setdefault(attraction, day.day)
 
+        weekday = (start + timedelta(days=day.day - 1)).weekday() if start else None
+        problems += _hours_problems(day.day, day.blocks, attractions, weekday)
+
         located = [a for a in visits if a.lat is not None and a.lon is not None]
-        km = sum(_km(a, b) for a, b in zip(located, located[1:]))
+        km = sum(distance_km(a.lat, a.lon, b.lat, b.lon) for a, b in zip(located, located[1:]))
         if km > MAX_KM_PER_DAY:
             problems.append(
                 f"Day {day.day}'s stops are about {km:.0f} km apart "

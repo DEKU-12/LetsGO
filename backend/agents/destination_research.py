@@ -22,10 +22,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.adapters.places import PlacesAdapter
+from backend.adapters.places import PlacesAdapter, name_variants, names_match
 from backend.adapters.weather import WeatherAdapter
-from backend.llm import LLM, LLMError, Tool, register_mock, register_mock_tool_calls
-from backend.state import Attraction, ResearchOutput, TravelState, WeatherOutlook, profile_note
+from backend.adapters.wikimedia import WikimediaAdapter
+from backend.llm import LLM, LLMError, Tool, register_mock
+from backend.state import (
+    Attraction,
+    Photo,
+    ResearchOutput,
+    TravelState,
+    WeatherOutlook,
+    profile_note,
+)
 
 RESEARCH_SYSTEM = """You are a destination researcher. Given a place and a traveller's
 interests, list what is genuinely worth their time.
@@ -47,7 +55,9 @@ Rules:
 - "category" is one of: landmark, museum, food, nature, neighbourhood, experience.
 - "est_hours" is realistic visit time including queueing.
 - "practical_notes" covers visa, safety, money and transit basics — 3 to 5 short items.
-- Only real places. If you are unsure a place exists, leave it out."""
+- Only real places. If you are unsure a place exists, leave it out.
+- One place per entry, named as it appears on a map. Do not combine places
+  ("South Beach and Ocean Drive"): name the main one, or list them separately."""
 
 # Small canned set so the mock backend produces something specific rather than
 # generic filler. Clearly fake data for the no-API-key path.
@@ -98,7 +108,7 @@ _CITY_HINTS = {
 }
 
 
-@register_mock_tool_calls("destination_research")
+@register_mock("destination_research:tools")
 def _mock_tool_calls(context: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"name": "get_weather", "args": {"city": context.get("destination", "")}}]
 
@@ -127,6 +137,78 @@ def _mock_research(context: dict[str, Any]) -> dict[str, Any]:
         ],
     }
 
+
+
+def _photos(details: dict[str, dict[str, Any]], sources: set[str]) -> dict[str, Any]:
+    """Photos for every Wikidata id the map entries carried, in one batch."""
+    qids = [d["wikidata"] for d in details.values() if d.get("wikidata")]
+    if not qids:
+        return {}
+    result = WikimediaAdapter().fetch(qids=qids)
+    if result.data:
+        sources.add(f"{result.provider}:{result.source}")
+    return result.data
+
+
+def _photo_for(
+    name: str, details: dict[str, dict[str, Any]], photos: dict[str, Any]
+) -> Photo | None:
+    photo = photos.get((details.get(name) or {}).get("wikidata") or "")
+    return _photo(name, photo) if photo else None
+
+
+def attach_photos(
+    attractions: list[Attraction],
+    destination: str,
+    details: dict[str, dict[str, Any]],
+    centre: dict[str, float] | None,
+    sources: set[str],
+) -> Photo | None:
+    """Give every attraction a photo, and return the destination's.
+
+    In order of trust:
+    1. The photo linked from the map entry that verified the place.
+    2. A Wikipedia search, accepted only when the article's title matches and
+       its coordinates are near where the map put the place. Needs a known
+       location, so unverified places skip it.
+    3. A photo of the destination, labelled as such — never passed off as the
+       place itself.
+    """
+    photos = _photos(details, sources)
+    for attraction in attractions:
+        attraction.photo = _photo_for(attraction.name, details, photos)
+    destination_photo = _photo_for(destination, details, photos)
+
+    searches = [
+        {"key": a.name, "query": f"{a.name} {destination}", "names": name_variants(a.name),
+         "lat": a.lat, "lon": a.lon}
+        for a in attractions if a.photo is None and a.lat is not None and a.lon is not None
+    ]
+    if destination_photo is None and centre:
+        searches.append({"key": destination, "query": destination,
+                         "names": [destination], "lat": centre["lat"], "lon": centre["lon"]})
+    if searches:
+        result = WikimediaAdapter().fetch(searches=searches)
+        if result.data:
+            sources.add(f"wikipedia:{result.source}")
+        found = {key: _photo(key, photo) for key, photo in result.data.items()}
+        for attraction in attractions:
+            attraction.photo = attraction.photo or found.get(attraction.name)
+        destination_photo = destination_photo or found.get(destination)
+
+    if destination_photo:
+        stand_in = destination_photo.model_copy(update={"caption": destination, "generic": True})
+        for attraction in attractions:
+            attraction.photo = attraction.photo or stand_in
+    return destination_photo
+
+
+def _photo(name: str, photo: dict[str, Any]) -> Photo:
+    # The linked item can be something related rather than the place itself
+    # (a café to its famous pastry). Say what the photo shows.
+    label = photo.get("label") or ""
+    caption = None if not label or names_match(name, label) else label
+    return Photo(url=photo["url"], page=photo["page"], credit=photo["credit"], caption=caption)
 
 
 def destination_research(state: TravelState, llm: LLM) -> dict[str, Any]:
@@ -205,25 +287,33 @@ def destination_research(state: TravelState, llm: LLM) -> dict[str, Any]:
     # trip has no single point on a map, so verifying it would only manufacture
     # failures. Only physical places are checked.
     locatable = [a for a in attractions if a.category != "experience"]
+    details: dict[str, dict[str, Any]] = {}
     if locatable:
         places = PlacesAdapter().fetch(
             destination=params.destination,
             names=[a.name for a in locatable],
+            details=True,
         )
         confirmed = places.data["confirmed"]
         if not places.is_mock:
             sources.add(f"{places.provider}:{places.source}")
             coords = places.data.get("coords") or {}
+            details = places.data.get("details") or {}
             for attraction in locatable:
                 attraction.verified = confirmed.get(attraction.name) is not None
                 if attraction.name in coords:
                     attraction.lat, attraction.lon = coords[attraction.name]
+                attraction.opening_hours = (details.get(attraction.name) or {}).get("opening_hours")
+
+    centre = places.data.get("centre") if locatable and not places.is_mock else None
+    destination_photo = attach_photos(attractions, params.destination, details, centre, sources)
 
     research = ResearchOutput(
         destination=params.destination,
         attractions=attractions,
         weather=next(iter(city_weather.values())),
         city_weather=city_weather,
+        photo=destination_photo,
         practical_notes=[str(n) for n in raw.get("practical_notes") or []],
         sources=sorted(sources) + [f"llm:{llm.provider}"],
     )

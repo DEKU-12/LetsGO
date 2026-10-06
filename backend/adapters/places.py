@@ -21,14 +21,19 @@ an unverified place fake; the number is reported as a confirmation rate.
 from __future__ import annotations
 
 import difflib
+import logging
+import math
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import httpx
 
 from backend.adapters.base import Adapter
 from backend.config import settings
+
+log = logging.getLogger(__name__)
 
 #: How far from the city centre a place may be and still count as "there".
 SEARCH_RADIUS_M = 60_000
@@ -86,7 +91,23 @@ def name_variants(name: str) -> list[str]:
         inner = inner.strip()
         if len(inner) > 3:
             variants.append(inner)
+    # "South Beach and Ocean Drive", "Everglades National Park – Shark Valley":
+    # two places in one name, and the map knows each half. A half made only of
+    # generic words ("Gardens" from "Vizcaya Museum and Gardens") is skipped —
+    # it would match any garden.
+    parts = re.split(r"\s+(?:and|&|/|–|—|-)\s+", stripped or name.strip())
+    if len(parts) > 1:
+        for part in (p.strip() for p in parts):
+            if part and part not in variants and set(_tokens(part)) - _GENERIC:
+                variants.append(part)
     return variants
+
+
+def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in kilometres."""
+    p1, q1, p2, q2 = map(math.radians, (lat1, lon1, lat2, lon2))
+    h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin((q2 - q1) / 2) ** 2
+    return 2 * 6371.0 * math.asin(math.sqrt(h))
 
 
 def names_match(queried: str, found: str) -> bool:
@@ -124,7 +145,9 @@ class PlacesAdapter(Adapter):
 
     # -- live ---------------------------------------------------------------
 
-    def _geocode(self, client: httpx.Client, destination: str) -> tuple[float, float, str]:
+    def _geocode(
+        self, client: httpx.Client, destination: str
+    ) -> tuple[float, float, str, str | None]:
         """Locate the destination, and pick the search area to verify within.
 
         A city is searched within ``SEARCH_RADIUS_M`` of its centre. A country
@@ -145,14 +168,36 @@ class PlacesAdapter(Adapter):
             area = f"countrycode:{properties['country_code']}"
         else:
             area = f"circle:{lon},{lat},{SEARCH_RADIUS_M}"
-        return lat, lon, area
+        return lat, lon, area, properties.get("place_id")
 
-    def _fetch_live(self, *, destination: str, names: list[str], **_: Any) -> dict[str, Any]:
+    def _details(self, place_id: str) -> dict[str, Any]:
+        """Wikidata id and opening hours from the full map entry.
+
+        The geocoder returns only names and positions; the OSM tags that link a
+        place to Wikidata and give its hours come from the place-details call.
+        """
+        response = httpx.get(
+            "https://api.geoapify.com/v2/place-details",
+            params={"id": place_id, "apiKey": self.api_key},
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        features = response.json().get("features") or []
+        properties = features[0].get("properties", {}) if features else {}
+        raw = (properties.get("datasource") or {}).get("raw") or {}
+        return {"wikidata": raw.get("wikidata"), "opening_hours": raw.get("opening_hours")}
+
+    def _fetch_live(
+        self, *, destination: str, names: list[str], details: bool = False, **_: Any
+    ) -> dict[str, Any]:
+        """Confirm each name. With ``details``, also each confirmed place's (and
+        the destination's) Wikidata id and opening hours."""
         with httpx.Client(timeout=20.0) as client:
-            lat, lon, area = self._geocode(client, destination)
+            lat, lon, area, destination_id = self._geocode(client, destination)
 
             confirmed: dict[str, str | None] = {}
             coords: dict[str, tuple[float, float]] = {}
+            place_ids: dict[str, str] = {}
             for name in names:
                 variants = name_variants(name)
                 confirmed[name] = None
@@ -182,11 +227,30 @@ class PlacesAdapter(Adapter):
                             confirmed[name] = candidate
                             if "lat" in properties and "lon" in properties:
                                 coords[name] = (properties["lat"], properties["lon"])
+                            if properties.get("place_id"):
+                                place_ids[name] = properties["place_id"]
                             break
                     if confirmed[name]:
                         break
 
-        return {"confirmed": confirmed, "coords": coords, "centre": {"lat": lat, "lon": lon}}
+        result: dict[str, Any] = {
+            "confirmed": confirmed, "coords": coords, "centre": {"lat": lat, "lon": lon},
+        }
+        if details:
+            wanted = {**place_ids, **({destination: destination_id} if destination_id else {})}
+            # One call per place: run them together, not one after another.
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                found = dict(zip(wanted, pool.map(self._safe_details, wanted.values())))
+            result["details"] = {k: v for k, v in found.items() if v}
+        return result
+
+    def _safe_details(self, place_id: str) -> dict[str, Any] | None:
+        """Details are extras: one failing must not undo the verification."""
+        try:
+            return self._details(place_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("geoapify: place details failed (%s)", self._redact(exc))
+            return None
 
     # -- mock ---------------------------------------------------------------
 
@@ -197,4 +261,5 @@ class PlacesAdapter(Adapter):
         of the check, so with no key every place is simply unchecked and the
         plan reports no confirmation rate at all.
         """
-        return {"confirmed": {name: None for name in names}, "coords": {}, "centre": None}
+        return {"confirmed": {name: None for name in names}, "coords": {}, "centre": None,
+                "details": {}}

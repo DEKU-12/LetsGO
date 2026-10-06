@@ -32,6 +32,25 @@ class TripParams(BaseModel):
     notes: str | None = None
 
 
+class Photo(BaseModel):
+    """A freely licensed photo from Wikimedia Commons, with its credit.
+
+    Commons licences (CC BY, CC BY-SA) require attribution, so the credit is
+    part of the photo, not decoration.
+    """
+
+    url: str
+    #: The Commons file page: author, licence, full size.
+    page: str
+    credit: str = ""
+    #: Set when the photo shows something related rather than the place
+    #: itself (a café linked to its famous pastry), so the plan says so.
+    caption: str | None = None
+    #: True when no photo of the place itself was found and this is a photo of
+    #: the destination instead; the plan labels it as such.
+    generic: bool = False
+
+
 class Attraction(BaseModel):
     name: str
     category: str = "attraction"
@@ -45,6 +64,10 @@ class Attraction(BaseModel):
     #: schedule check measure how far apart one day's stops are.
     lat: float | None = None
     lon: float | None = None
+    #: From the same map entry that verified the place: its photo, and its
+    #: opening hours in OpenStreetMap format ("Mo-Su 09:00-17:00").
+    photo: Photo | None = None
+    opening_hours: str | None = None
 
 
 class WeatherOutlook(BaseModel):
@@ -61,6 +84,8 @@ class ResearchOutput(BaseModel):
     #: Outlook per city the research agent chose to check, for trips that
     #: cover several (Tokyo and Kyoto). `weather` is the first of these.
     city_weather: dict[str, WeatherOutlook] = Field(default_factory=dict)
+    #: A photo of the destination itself, for the top of the plan.
+    photo: Photo | None = None
     practical_notes: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
 
@@ -151,6 +176,12 @@ class TravelState(TypedDict, total=False):
     trace: Annotated[list[str], operator.add]
     errors: Annotated[list[str], operator.add]
     meta: dict[str, Any]
+
+
+def edit_note(state: TravelState) -> str:
+    """The traveller's change request, when an agent is rerun to edit a plan."""
+    request = state.get("edit_request")
+    return f"\n\nThe traveller asked for this change: {request}" if request else ""
 
 
 def profile_note(state: TravelState) -> str:

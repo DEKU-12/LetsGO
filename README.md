@@ -38,7 +38,7 @@ environment the whole graph still runs end to end — that is the default, not a
 degraded path.
 
 To use a real model, copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`
-(the project targets `claude-sonnet-5`).
+(the project targets `claude-opus-5-5`, Claude Opus 5.5).
 
 ## Evaluation results
 
@@ -156,6 +156,9 @@ which is what the trajectory checks in `eval/` score.
 | `eval/trajectory.py` | Dependency order, unused output, repaired routes |
 | `eval/run.py` | The report |
 | `eval/places_benchmark.py` | Error rate of the place verifier itself |
+| `backend/adapters/wikimedia.py` | Photos of verified places via their Wikidata link, with credits |
+| `backend/hours.py` | Reads OpenStreetMap opening hours (common forms only; never guesses) |
+| `eval/photos.py` | Photo and opening-hours coverage on 15 real places |
 | `eval/tools.py` | Research agent tool calls: right tool and city, invalid, duplicate, fallbacks |
 | `backend/preferences.py` | Finds lasting preferences (diet, kids, pace) in a request, to offer remembering |
 | `eval/preferences.py` | Preference extraction: lasting ones caught, trip-only details leaked |
@@ -185,6 +188,21 @@ which is what the trajectory checks in `eval/` score.
   every call is logged for evaluation. What must always happen does not depend
   on the model: weather is fetched anyway if it never asks, and every
   recommended place is map-verified afterwards in code.
+- **Photos are of the place that was verified.** The map entry that confirmed
+  a place carries its Wikidata id; Wikidata names its photo; Commons supplies
+  it with author and licence, credited under each photo. That link is followed
+  first because it cannot pick a different place with the same name. A place
+  without one falls back to a Wikipedia search, accepted only when the article's title
+  matches *and* its coordinates are near where the map put the place. Anything
+  still without one shows a photo of the destination, labelled "general photo
+  of Miami, not this place". When a link points at something related (a café's
+  famous pastry), the photo is captioned with what it shows. Combined names
+  ("South Beach and Ocean Drive") are split for the lookup, and the research
+  agent is told to name one place per entry. Measure with `eval/photos.py`.
+- **Opening hours come from the same map entry** and are read only when
+  certain (`backend/hours.py`): seasonal or holiday rules are left unread rather
+  than guessed. The itinerary agent sees them, and the schedule check sends a
+  plan back for a visit outside them — or, on a dated trip, on a closed weekday.
 - **Remembering asks first.** After a plan, lasting preferences in the
   request ("vegetarian", "travels with kids") are offered, not saved; the
   traveller keeps the ones they want, sees them as tags, and can delete any.

@@ -27,7 +27,7 @@ from typing import Any, Callable
 from backend.config import settings
 
 DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-5",
+    "anthropic": "claude-opus-5-5",
     # Groq retired the Llama 3.3 endpoints; gpt-oss-120b is the current
     # free-tier model that follows JSON instructions reliably.
     "groq": "openai/gpt-oss-120b",
@@ -87,10 +87,21 @@ def _first_json_object(raw: str) -> str:
 
 
 #: Retries on rate limits and transient errors. The SDKs wait between tries,
-#: honouring the provider's retry-after hint, but stop after 2 by default.
-#: Groq's free tier resets its per-minute token budget once a minute, and 8
-#: tries with the SDK's backoff covers that window.
-MAX_RETRIES = 8
+#: honouring the provider's retry-after hint. Groq's per-minute limit asks for
+#: a few seconds, which 3 tries absorb. More tries do not help with the daily
+#: limit — they only leave the page waiting minutes for an answer that will
+#: still be "no" — so a spent quota fails fast and says why.
+MAX_RETRIES = 3
+
+
+#: Claude Opus 5.5 always thinks, and thinking spends the same max_tokens
+#: budget as the answer, so a 512-token call can run out before it answers.
+#: This floor leaves room for both; unused tokens are not billed.
+ANTHROPIC_MIN_TOKENS = 16000
+
+#: If a safety classifier declines a request, the API re-runs it on a fallback
+#: model chosen by the refusal category, inside the same call.
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
 @dataclass
@@ -114,11 +125,13 @@ class _Anthropic:
         )
 
     def __call__(self, system: str, prompt: str, max_tokens: int) -> str:
-        response = self._client.messages.create(
+        response = self._client.beta.messages.create(
             model=self.model,
-            max_tokens=max_tokens,
+            max_tokens=max(max_tokens, ANTHROPIC_MIN_TOKENS),
             system=system,
             messages=[{"role": "user", "content": prompt}],
+            betas=[FALLBACK_BETA],
+            fallbacks="default",
         )
         return "".join(b.text for b in response.content if b.type == "text")
 
@@ -132,14 +145,16 @@ class _Anthropic:
         ]
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
         for round_ in range(max_rounds + 1):
-            response = self._client.messages.create(
+            response = self._client.beta.messages.create(
                 model=self.model,
-                max_tokens=max_tokens,
+                max_tokens=max(max_tokens, ANTHROPIC_MIN_TOKENS),
                 system=system,
                 messages=messages,
                 tools=specs,
                 # Last round: answer with what you have.
                 tool_choice={"type": "none" if round_ == max_rounds else "auto"},
+                betas=[FALLBACK_BETA],
+                fallbacks="default",
             )
             calls = [b for b in response.content if b.type == "tool_use"]
             if not calls:
@@ -239,21 +254,6 @@ class _Mock:
 
 MockFn = Callable[[dict[str, Any]], Any]
 _MOCKS: dict[str, MockFn] = {}
-
-
-#: For tool-using tasks: which tool calls the mock "decides" to make. Each
-#: returns a list of {"name": ..., "args": {...}}.
-_MOCK_TOOL_CALLS: dict[str, MockFn] = {}
-
-
-def register_mock_tool_calls(task: str) -> Callable[[MockFn], MockFn]:
-    """Register the tool calls the mock backend makes for `task`."""
-
-    def decorator(fn: MockFn) -> MockFn:
-        _MOCK_TOOL_CALLS[task] = fn
-        return fn
-
-    return decorator
 
 
 def register_mock(task: str) -> Callable[[MockFn], MockFn]:
@@ -375,7 +375,9 @@ class LLM:
             return json.dumps(result, default=str)
 
         if self.is_mock:
-            for call in _MOCK_TOOL_CALLS.get(task, lambda _: [])(context or {}):
+            # The tool calls the mock "decides" to make: a mock registered as
+            # "<task>:tools" returning [{"name": ..., "args": {...}}].
+            for call in _MOCKS.get(f"{task}:tools", lambda _: [])(context or {}):
                 execute(call["name"], call["args"])
             return self._mock(task, context or {}), calls
 

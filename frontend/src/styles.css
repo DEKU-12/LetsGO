@@ -280,6 +280,25 @@ textarea:disabled { opacity: 0.6; }
 .plan ul { padding-left: 1.2rem; }
 .plan li { margin: 0.3rem 0; }
 .plan em { color: var(--muted); }
+.plan em a { color: inherit; font-size: 0.8rem; }
+
+/* Destination photo under the title; small thumbnails beside places. */
+.plan p img {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  border-radius: var(--radius);
+}
+.plan li { display: flow-root; }
+.plan li img {
+  float: left;
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  margin: 0.2rem 0.75rem 0.3rem 0;
+  border-radius: 6px;
+}
 .plan hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0 1rem; }
 
 .plan table {

@@ -9,9 +9,10 @@ short opening paragraph, and only from facts already in state.
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from backend.llm import LLM, LLMError, register_mock
-from backend.state import ITINERARY, TravelState
+from backend.state import ITINERARY, Photo, TravelState
 
 SUMMARY_SYSTEM = """You write the opening paragraph of a travel plan.
 
@@ -47,6 +48,24 @@ def _mock_summary(context: dict[str, Any]) -> dict[str, Any]:
         sentences.append("Check the weather note before locking in outdoor days.")
 
     return {"summary": " ".join(sentences)}
+
+
+def _url(url: str) -> str:
+    """Commons file names contain parentheses, which end a markdown link."""
+    return quote(url, safe=":/%")
+
+
+def _photo_md(name: str, photo: Photo) -> tuple[str, str]:
+    """(image, credit) markdown. The credit links to the Commons file page,
+    which carries the author and licence the photo is used under."""
+    alt = name.replace("[", "").replace("]", "")
+    if photo.generic:
+        alt = f"{photo.caption} (general photo)"
+        shows = f" — general photo of {photo.caption}, not this place"
+    else:
+        shows = f" — shows {photo.caption}" if photo.caption else ""
+    credit = f"_[Photo: {photo.credit or 'Wikimedia Commons'}]({_url(photo.page)}){shows}_"
+    return f"![{alt}]({_url(photo.url)})", credit
 
 
 def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
@@ -90,6 +109,10 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
         else f"# {params.destination} — travel plan"
     lines: list[str] = [title, ""]
 
+    if research and research.photo:
+        image, credit = _photo_md(params.destination, research.photo)
+        lines += [image, "", credit, ""]
+
     if summary:
         lines += [summary, ""]
 
@@ -116,7 +139,13 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
             lines.append("")
             for a in research.attractions:
                 detail = f" — {a.description}" if a.description else ""
-                lines.append(f"- **{a.name}** _({a.category}, ~{a.est_hours:g}h)_{detail}")
+                hours = f", open {a.opening_hours}" if a.opening_hours else ""
+                image, credit = _photo_md(a.name, a.photo) if a.photo else ("", "")
+                lines.append(
+                    f"- {image + ' ' if image else ''}**{a.name}** "
+                    f"_({a.category}, ~{a.est_hours:g}h{hours})_{detail}"
+                    f"{' ' + credit if credit else ''}"
+                )
             lines.append("")
         if research.practical_notes:
             lines.append("**Practical notes**")

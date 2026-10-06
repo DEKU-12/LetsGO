@@ -20,7 +20,8 @@ export interface PlanResult {
   duration_s?: number;
   /** Preferences that were applied to this plan. */
   profile?: string[];
-  /** Lasting preferences found in the request, offered (not saved) to remember. */
+  /** Lasting preferences found in the request, offered (not saved) to remember.
+   *  Arrives in a separate "suggestions" message after the plan. */
   suggested_preferences?: string[];
   /** Set on a version made by an edit: the trip it was edited from. */
   parent_id?: number;
@@ -49,6 +50,7 @@ export type ServerEvent =
   | { type: "route"; plan: RouteStep[]; reasoning: string }
   | { type: "agent"; agent: string; label: string; notes: string[] }
   | { type: "error"; message: string }
+  | { type: "suggestions"; preferences: string[] }
   | PlanResult;
 
 export interface Health {

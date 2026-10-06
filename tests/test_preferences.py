@@ -98,13 +98,15 @@ def test_bad_user_ids_and_oversized_profiles_are_refused(client, user) -> None:
     assert client.put(f"/api/profile/{user}", json=too_long).status_code == 422
 
 
-def test_a_plan_suggests_but_does_not_save(client, user) -> None:
+def test_a_plan_arrives_first_then_suggestions_without_saving(client, user) -> None:
     with client.websocket_connect("/ws/plan") as ws:
         ws.send_json({"request": "I'm vegan. 3 days in Lisbon", "provider": "mock", "user_id": user})
         while (message := ws.receive_json())["type"] not in ("done", "clarification", "error"):
             pass
+        assert message["type"] == "done" and message["plan"]
+        follow_up = ws.receive_json()
 
-    assert message["suggested_preferences"] == ["vegan"]
+    assert follow_up == {"type": "suggestions", "preferences": ["vegan"]}
     assert client.get(f"/api/profile/{user}").json() == {"preferences": []}
 
 
@@ -121,8 +123,11 @@ def test_saved_preferences_are_applied_and_kept_with_the_trip(client, user) -> N
 
 
 def test_no_user_id_means_no_suggestions(client) -> None:
+    from starlette.websockets import WebSocketDisconnect
+
     with client.websocket_connect("/ws/plan") as ws:
         ws.send_json({"request": "I'm vegan. 3 days in Lisbon", "provider": "mock"})
-        while (message := ws.receive_json())["type"] not in ("done", "clarification", "error"):
+        while ws.receive_json()["type"] not in ("done", "clarification", "error"):
             pass
-    assert message["suggested_preferences"] == []
+        with pytest.raises(WebSocketDisconnect):  # closed: no suggestions follow
+            ws.receive_json()

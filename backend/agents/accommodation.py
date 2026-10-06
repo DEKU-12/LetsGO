@@ -17,7 +17,7 @@ from typing import Any
 
 from backend.adapters.places import PlacesAdapter
 from backend.llm import LLM, LLMError, register_mock
-from backend.state import AccommodationOutput, StayArea, TravelState, profile_note
+from backend.state import AccommodationOutput, StayArea, TravelState, edit_note, profile_note
 
 ACCOMMODATION_SYSTEM = """You advise a traveller on which neighbourhoods to stay in.
 
@@ -67,12 +67,6 @@ def _mock_accommodation(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _change(state: TravelState) -> str:
-    """The traveller's change request, when this agent is rerun to edit a plan."""
-    request = state.get("edit_request")
-    return f"\n\nThe traveller asked for this change: {request}" if request else ""
-
-
 def accommodation(state: TravelState, llm: LLM) -> dict[str, Any]:
     """Graph node: recommend neighbourhoods to stay in."""
     params = state["params"]
@@ -99,7 +93,7 @@ def accommodation(state: TravelState, llm: LLM) -> dict[str, Any]:
                 f"Interests: {', '.join(params.preferences) or 'none stated'}\n"
                 f"Places they plan to visit: {', '.join(anchors[:20]) or 'not planned yet'}"
                 f"{profile_note(state)}"
-                f"{_change(state)}"
+                f"{edit_note(state)}"
             ),
             context={"destination": params.destination},
             max_tokens=1024,

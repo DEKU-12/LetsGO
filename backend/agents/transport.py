@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.llm import LLM, LLMError, register_mock
-from backend.state import TransportOutput, TransportTip, TravelState, profile_note
+from backend.state import TransportOutput, TransportTip, TravelState, edit_note, profile_note
 
 TRANSPORT_SYSTEM = """You advise on travel to and around a destination.
 
@@ -41,12 +41,6 @@ def _mock_transport(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _change(state: TravelState) -> str:
-    """The traveller's change request, when this agent is rerun to edit a plan."""
-    request = state.get("edit_request")
-    return f"\n\nThe traveller asked for this change: {request}" if request else ""
-
-
 def transport(state: TravelState, llm: LLM) -> dict[str, Any]:
     """Graph node: advise how to get there and get around."""
     params = state["params"]
@@ -65,7 +59,7 @@ def transport(state: TravelState, llm: LLM) -> dict[str, Any]:
                 f"Travellers: {params.travelers}\n"
                 f"Places in their schedule: {', '.join(stops[:20]) or 'not planned yet'}"
                 f"{profile_note(state)}"
-                f"{_change(state)}"
+                f"{edit_note(state)}"
             ),
             context={"destination": params.destination},
             max_tokens=1024,

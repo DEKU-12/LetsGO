@@ -105,6 +105,14 @@ export function usePlanner() {
           ws.close();
           break;
 
+        case "suggestions":
+          setState((s) =>
+            s.result
+              ? { ...s, result: { ...s.result, suggested_preferences: message.preferences } }
+              : s,
+          );
+          break;
+
         default:
           setState((s) => ({
             ...s,

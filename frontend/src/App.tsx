@@ -341,7 +341,15 @@ function describeEdit(edited: NonNullable<PlanResult["edited"]>): string {
 }
 
 function Plan({ markdown }: { markdown: string }) {
-  const html = useMemo(() => marked.parse(markdown, { async: false }), [markdown]);
+  const html = useMemo(
+    () =>
+      // Photos load lazily, and without telling Wikimedia which page asked.
+      (marked.parse(markdown, { async: false }) as string).replaceAll(
+        "<img ",
+        '<img loading="lazy" referrerpolicy="no-referrer" ',
+      ),
+    [markdown],
+  );
   return (
     <article className="plan" dangerouslySetInnerHTML={{ __html: html as string }} />
   );
