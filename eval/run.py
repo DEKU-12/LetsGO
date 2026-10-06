@@ -137,6 +137,8 @@ def main() -> int:
     if trajectories:
         clean = sum(t.clean for _, t in trajectories)
         print(f"\n\n3. TRAJECTORY   ({clean}/{len(trajectories)} runs clean)\n")
+        redone = sum(t.schedule_retries > 0 for _, t in trajectories)
+        print(f"   schedule sent back for fixes in {redone}/{len(trajectories)} runs\n")
         for case_id, report in trajectories:
             if report.clean:
                 print(f"   {case_id:<26} ok   {' -> '.join(

@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 
 from backend.agents.accommodation import accommodation
 from backend.agents.aggregator import aggregator
+from backend.agents.check import after_check, check_itinerary
 from backend.agents.destination_research import destination_research
 from backend.agents.itinerary import itinerary
 from backend.agents.supervisor import supervisor
@@ -59,6 +60,7 @@ def build_graph(llm: LLM | None = None):
     graph.add_node("supervisor", lambda s: supervisor(s, llm, available))
     for name, fn in WORKER_NODES.items():
         graph.add_node(name, lambda s, _fn=fn: _fn(s, llm))
+    graph.add_node("check_itinerary", check_itinerary)
     graph.add_node(AGGREGATOR, lambda s: aggregator(s, llm))
     graph.add_node("validate_plan", validate_plan)
 
@@ -72,7 +74,14 @@ def build_graph(llm: LLM | None = None):
         {**{name: name for name in WORKER_NODES}, AGGREGATOR: AGGREGATOR, END: END},
     )
     for name in WORKER_NODES:
-        graph.add_edge(name, "supervisor")
+        if name != ITINERARY:
+            graph.add_edge(name, "supervisor")
+    # The itinerary is checked before the supervisor moves on, and sent back
+    # with a list of problems if it fails.
+    graph.add_edge(ITINERARY, "check_itinerary")
+    graph.add_conditional_edges(
+        "check_itinerary", after_check, {ITINERARY: ITINERARY, "supervisor": "supervisor"}
+    )
     graph.add_edge(AGGREGATOR, "validate_plan")
     graph.add_edge("validate_plan", END)
 

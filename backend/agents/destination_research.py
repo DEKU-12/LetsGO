@@ -151,8 +151,11 @@ def destination_research(state: TravelState, llm: LLM) -> dict[str, Any]:
         confirmed = places.data["confirmed"]
         if not places.is_mock:
             sources.append(f"{places.provider}:{places.source}")
+            coords = places.data.get("coords") or {}
             for attraction in locatable:
                 attraction.verified = confirmed.get(attraction.name) is not None
+                if attraction.name in coords:
+                    attraction.lat, attraction.lon = coords[attraction.name]
 
     research = ResearchOutput(
         destination=params.destination,

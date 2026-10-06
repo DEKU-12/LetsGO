@@ -35,6 +35,7 @@ AGENT_LABELS: dict[str, str] = {
     "supervisor": "Deciding which specialists are needed",
     "destination_research": "Researching the destination",
     "itinerary": "Building the day-by-day schedule",
+    "check_itinerary": "Checking the schedule is realistic",
     "accommodation": "Finding places to stay",
     "transport": "Working out how to get there",
     AGGREGATOR: "Writing up the plan",

@@ -12,6 +12,10 @@ Four checks:
   the final plan never shows. Wasted tokens and latency.
 * **repaired_plan** — the supervisor's route needed fixing before it could run.
 * **agent_errors** — anything an agent recorded about its own run.
+
+Also counted, not failed: **schedule_retries**, how many times the schedule
+check sent the itinerary back. A redo is the check doing its job, but a high
+rate means the itinerary prompt is weak.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ class TrajectoryReport:
     unused_output: list[str] = field(default_factory=list)
     repaired_plan: list[str] = field(default_factory=list)
     agent_errors: list[str] = field(default_factory=list)
+    schedule_retries: int = 0
 
     @property
     def clean(self) -> bool:
@@ -77,6 +82,10 @@ def check_trajectory(state: TravelState) -> TrajectoryReport:
     # 3. Did the supervisor's route need repairing?
     routing = (state.get("meta") or {}).get("routing", {})
     report.repaired_plan = list(routing.get("repairs") or [])
+
+    # How often the schedule check sent the itinerary back.
+    checks = (state.get("meta") or {}).get("itinerary_checks") or []
+    report.schedule_retries = sum(1 for problems in checks if problems)
 
     # 4. Anything the agents flagged about themselves.
     report.agent_errors = list(state.get("errors") or [])

@@ -141,6 +141,7 @@ class PlacesAdapter(Adapter):
             lat, lon = self._geocode(client, destination)
 
             confirmed: dict[str, str | None] = {}
+            coords: dict[str, tuple[float, float]] = {}
             for name in names:
                 variants = name_variants(name)
                 confirmed[name] = None
@@ -168,11 +169,13 @@ class PlacesAdapter(Adapter):
                         )
                         if candidate and any(names_match(v, candidate) for v in variants):
                             confirmed[name] = candidate
+                            if "lat" in properties and "lon" in properties:
+                                coords[name] = (properties["lat"], properties["lon"])
                             break
                     if confirmed[name]:
                         break
 
-        return {"confirmed": confirmed, "centre": {"lat": lat, "lon": lon}}
+        return {"confirmed": confirmed, "coords": coords, "centre": {"lat": lat, "lon": lon}}
 
     # -- mock ---------------------------------------------------------------
 
@@ -183,4 +186,4 @@ class PlacesAdapter(Adapter):
         of the check, so with no key every place is simply unchecked and the
         plan reports no confirmation rate at all.
         """
-        return {"confirmed": {name: None for name in names}, "centre": None}
+        return {"confirmed": {name: None for name in names}, "coords": {}, "centre": None}

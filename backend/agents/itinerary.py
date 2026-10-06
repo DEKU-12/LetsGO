@@ -98,6 +98,17 @@ def itinerary(state: TravelState, llm: LLM) -> dict[str, Any]:
         f"- {a.name} ({a.category}, ~{a.est_hours:g}h): {a.description}" for a in attractions
     )
 
+    # A redo after the schedule check failed: show the draft and what to fix.
+    redo = ""
+    feedback = state.get("itinerary_feedback") or []
+    previous = state.get("itinerary")
+    if feedback and previous is not None:
+        redo = (
+            f"\n\nYour previous draft:\n{previous.model_dump_json()}\n\n"
+            "It failed these checks. Fix every one, change nothing else:\n"
+            + "\n".join(f"- {p}" for p in feedback)
+        )
+
     try:
         raw = llm.json(
             task="itinerary",
@@ -108,6 +119,7 @@ def itinerary(state: TravelState, llm: LLM) -> dict[str, Any]:
                 f"Travellers: {params.travelers}\n"
                 f"Interests: {', '.join(params.preferences) or 'none stated'}\n\n"
                 f"Attractions available:\n{listing}"
+                f"{redo}"
             ),
             context={
                 "attractions": [a.model_dump() for a in attractions],

@@ -41,6 +41,10 @@ class Attraction(BaseModel):
     #: the destination, False if it could not be confirmed, None if unchecked.
     #: False means "not confirmed", not "fake" — see adapters/places.py.
     verified: bool | None = None
+    #: Map position, filled in when the place verifier confirmed it. Lets the
+    #: schedule check measure how far apart one day's stops are.
+    lat: float | None = None
+    lon: float | None = None
 
 
 class WeatherOutlook(BaseModel):
@@ -116,6 +120,11 @@ class TravelState(TypedDict, total=False):
     accommodation: AccommodationOutput | None
     transport: TransportOutput | None
 
+    # schedule check (see agents/check.py)
+    #: Problems the last check found; the itinerary agent reads these on a redo.
+    itinerary_feedback: list[str]
+    check_attempts: int
+
     # aggregation
     final_plan: str | None
 
@@ -139,6 +148,8 @@ def new_state(request: str) -> TravelState:
         itinerary=None,
         accommodation=None,
         transport=None,
+        itinerary_feedback=[],
+        check_attempts=0,
         final_plan=None,
         sources=[],
         trace=[],
