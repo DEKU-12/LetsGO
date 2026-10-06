@@ -3,7 +3,7 @@
     uv run python -m eval.edits
     uv run python -m eval.edits --provider mock   # free, structural only
 
-Plans two base trips, then applies ten labelled change requests to them and
+Plans two base trips, then applies thirteen labelled change requests to them and
 reports three things:
 
 * **routing** — did the edit go to the right section, and the right days?
@@ -43,6 +43,8 @@ class EditCase:
     message: str
     agent: str
     days: tuple[int, ...] = ()
+    #: The trip day the traveller is on, for "today"/"tomorrow" requests.
+    today: int | None = None
 
 
 CASES: tuple[EditCase, ...] = (
@@ -57,6 +59,10 @@ CASES: tuple[EditCase, ...] = (
     EditCase("late-starts", "rome", "nothing before 10am, I hate early mornings", "itinerary"),
     EditCase("near-vatican", "rome", "a hotel closer to the Vatican", "accommodation"),
     EditCase("question", "rome", "what's the weather going to be like?", NONE),
+    # Trip-day help: "today" and "tomorrow" must land on the right day.
+    EditCase("rain-today", "japan", "it's pouring, rearrange today", "itinerary", (2,), today=2),
+    EditCase("tired-today", "rome", "we're exhausted, make today easy", "itinerary", (3,), today=3),
+    EditCase("late-tomorrow", "rome", "let's start later tomorrow", "itinerary", (2,), today=1),
 )
 
 
@@ -80,7 +86,7 @@ def main() -> int:
     print(f"\n  {'case':<20}{'routed':<9}{'applied':<9}{'untouched':<11}detail")
     for case in CASES:
         base = bases[case.base]
-        decision = route_edit(base, case.message, llm)
+        decision = route_edit(base, case.message, llm, case.today)
         routed = decision["agent"] == case.agent and tuple(decision["days"]) == case.days
         detail = f"→ {decision['agent']} {decision['days'] or ''}".strip()
 
@@ -89,7 +95,7 @@ def main() -> int:
         if decision.get("error"):
             failed = decision["error"]
         elif decision["agent"] != NONE:
-            edited, reply = edit_trip(base, case.message, llm)
+            edited, reply = edit_trip(base, case.message, llm, case.today)
             section = decision["agent"]
             if edited is None:
                 failed = reply

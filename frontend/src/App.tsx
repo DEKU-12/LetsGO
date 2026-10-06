@@ -108,6 +108,7 @@ export default function App() {
           reply={planner.reply}
           canUndo={planner.history.length > 0}
           onEdit={planner.edit}
+          onCheckToday={planner.checkToday}
           onUndo={planner.undo}
         />
       )}
@@ -162,6 +163,7 @@ function EditBox({
   reply,
   canUndo,
   onEdit,
+  onCheckToday,
   onUndo,
 }: {
   tripId: number;
@@ -169,16 +171,19 @@ function EditBox({
   editing: boolean;
   reply: string | null;
   canUndo: boolean;
-  onEdit: (message: string, tripId: number) => void;
+  onEdit: (message: string, tripId: number, today: number | null) => void;
+  onCheckToday: (tripId: number, today: number) => void;
   onUndo: () => void;
 }) {
   const [message, setMessage] = useState("");
+  // The trip day the traveller is on. Unset until they say they are travelling.
+  const [today, setToday] = useState<number | null>(null);
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
     const text = message.trim();
     if (text && !editing) {
-      onEdit(text, tripId);
+      onEdit(text, tripId, today);
       setMessage("");
     }
   }
@@ -217,13 +222,43 @@ function EditBox({
           </button>
         )}
       </div>
+      {result.days > 0 && (
+        <div className="today">
+          <label>
+            On the trip?{" "}
+            <select
+              aria-label="Which day of the trip are you on?"
+              value={today ?? ""}
+              disabled={editing}
+              onChange={(e) => setToday(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">Not yet</option>
+              {Array.from({ length: result.days }, (_, i) => i + 1).map((day) => (
+                <option key={day} value={day}>
+                  I'm on day {day}
+                </option>
+              ))}
+            </select>
+          </label>
+          {today !== null && (
+            <button
+              type="button"
+              className="chip"
+              disabled={editing}
+              onClick={() => onCheckToday(tripId, today)}
+            >
+              Check today's weather
+            </button>
+          )}
+        </div>
+      )}
       {result.edited && !reply && <p className="edit-note">{describeEdit(result.edited)}</p>}
       {reply && <p className="edit-note">{reply}</p>}
     </form>
   );
 }
 
-function describeEdit(edited: { section: string; days: number[] }): string {
+function describeEdit(edited: NonNullable<PlanResult["edited"]>): string {
   const section =
     { itinerary: "the schedule", accommodation: "where to stay", transport: "transport" }[
       edited.section
@@ -231,7 +266,11 @@ function describeEdit(edited: { section: string; days: number[] }): string {
   const days = edited.days.length
     ? ` (day${edited.days.length > 1 ? "s" : ""} ${edited.days.join(", ")})`
     : "";
-  return `Updated ${section}${days}. Everything else is unchanged.`;
+  const weather = edited.weather?.description
+    ? `It's ${edited.weather.description}, ${edited.weather.temp_c}°C. `
+    : "";
+  if (!edited.changed) return `${weather}Looked at ${section}${days} and found nothing to change.`;
+  return `${weather}Updated ${section}${days}. Everything else is unchanged.`;
 }
 
 function Plan({ markdown }: { markdown: string }) {

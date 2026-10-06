@@ -1,6 +1,8 @@
 """Weather outlook for a destination.
 
 Live source: OpenWeather (current weather + 5 day forecast endpoints).
+``fetch(destination=...)`` returns the trip outlook; ``fetch(destination=...,
+when="now")`` returns conditions right now, for trip-day help.
 Mock source: a small climate table keyed by city, with a generic temperate
 default. Mock values are plausible, not real — anything built on them is
 labelled as mock further up the stack.
@@ -52,23 +54,56 @@ def _advice(high: float, low: float) -> str:
     return "Comfortable for walking; a light rain layer is sensible."
 
 
+#: OpenWeather condition groups that make outdoor sightseeing miserable.
+_BAD_SKIES = {"Rain", "Drizzle", "Thunderstorm", "Snow"}
+
+#: Temperatures (C) outside which a day outdoors needs rethinking.
+TOO_HOT_C = 34.0
+TOO_COLD_C = 0.0
+
+
+def bad_for_outdoors(main: str, temp_c: float | None) -> bool:
+    """Would a sensible person move today's outdoor plans indoors?"""
+    if main in _BAD_SKIES:
+        return True
+    return temp_c is not None and not (TOO_COLD_C < temp_c < TOO_HOT_C)
+
+
 class WeatherAdapter(Adapter):
     name = "openweather"
 
     def __init__(self, api_key: str | None = None) -> None:
         super().__init__(api_key if api_key is not None else settings.openweather_api_key)
 
-    def _fetch_live(self, *, destination: str, **_: Any) -> dict[str, Any]:
+    def _locate(self, client: httpx.Client, destination: str) -> tuple[float, float]:
+        geo = client.get(
+            "https://api.openweathermap.org/geo/1.0/direct",
+            params={"q": destination, "limit": 1, "appid": self.api_key},
+        )
+        geo.raise_for_status()
+        places = geo.json()
+        if not places:
+            raise ValueError(f"OpenWeather could not geocode {destination!r}")
+        return places[0]["lat"], places[0]["lon"]
+
+    def _fetch_live(self, *, destination: str, when: str = "outlook", **_: Any) -> dict[str, Any]:
         with httpx.Client(timeout=10.0) as client:
-            geo = client.get(
-                "https://api.openweathermap.org/geo/1.0/direct",
-                params={"q": destination, "limit": 1, "appid": self.api_key},
-            )
-            geo.raise_for_status()
-            places = geo.json()
-            if not places:
-                raise ValueError(f"OpenWeather could not geocode {destination!r}")
-            lat, lon = places[0]["lat"], places[0]["lon"]
+            lat, lon = self._locate(client, destination)
+
+            if when == "now":
+                current = client.get(
+                    "https://api.openweathermap.org/data/2.5/weather",
+                    params={"lat": lat, "lon": lon, "units": "metric", "appid": self.api_key},
+                )
+                current.raise_for_status()
+                body = current.json()
+                main = body["weather"][0]["main"]
+                temp = round(body["main"]["temp"], 1)
+                return {
+                    "description": body["weather"][0]["description"],
+                    "temp_c": temp,
+                    "bad": bad_for_outdoors(main, temp),
+                }
 
             forecast = client.get(
                 "https://api.openweathermap.org/data/2.5/forecast",
@@ -91,7 +126,12 @@ class WeatherAdapter(Adapter):
             "advice": _advice(avg_high, avg_low),
         }
 
-    def _fetch_mock(self, *, destination: str, **_: Any) -> dict[str, Any]:
+    def _fetch_mock(self, *, destination: str, when: str = "outlook", **_: Any) -> dict[str, Any]:
+        if when == "now":
+            # Live conditions cannot be faked usefully: a mock that said "rain"
+            # would rearrange real plans for weather that is not happening.
+            return {"description": None, "temp_c": None, "bad": False}
+
         key = destination.strip().lower()
         high, low, summary = next(
             (v for k, v in _CLIMATE.items() if k in key),

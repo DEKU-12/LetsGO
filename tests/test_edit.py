@@ -130,7 +130,7 @@ def test_an_edit_is_saved_as_a_new_version(client: TestClient) -> None:
     assert body["type"] == "done"
     assert body["trip_id"] != original["trip_id"]
     assert body["parent_id"] == original["trip_id"]
-    assert body["edited"] == {"section": "itinerary", "days": [3]}
+    assert (body["edited"]["section"], body["edited"]["days"]) == ("itinerary", [3])
 
     saved = client.get(f"/api/trips/{body['trip_id']}").json()
     assert saved["parent_id"] == original["trip_id"]
@@ -178,3 +178,96 @@ def test_a_model_failure_mid_edit_changes_nothing(planned, llm, monkeypatch) -> 
 def test_naming_every_day_means_the_whole_trip(planned, llm) -> None:
     every_day = " ".join(f"day {d}" for d in range(1, len(planned["itinerary"].days) + 1))
     assert route_edit(planned, f"start later on {every_day}", llm)["days"] == []
+
+
+# -- trip-day help ------------------------------------------------------------
+
+RAIN = {"description": "moderate rain", "temp_c": 14.0, "bad": True}
+SUN = {"description": "clear sky", "temp_c": 22.0, "bad": False}
+
+
+def test_today_in_a_message_means_the_day_the_traveller_is_on(planned, llm) -> None:
+    decision = route_edit(planned, "it's raining, rearrange today", llm, today=2)
+    assert (decision["agent"], decision["days"]) == ("itinerary", [2])
+
+
+def test_trip_day_comes_from_the_start_date(planned) -> None:
+    from datetime import date
+
+    from backend.edit import trip_day
+
+    dated = {**planned, "params": planned["params"].model_copy(update={"start_date": "2026-10-01"})}
+    assert trip_day(dated, date(2026, 10, 3)) == 3
+    assert trip_day(dated, date(2026, 9, 30)) is None  # before the trip
+    assert trip_day(dated, date(2026, 12, 1)) is None  # after it
+    assert trip_day(planned, date(2026, 10, 3)) is None  # no start date
+
+
+def test_fine_weather_changes_nothing(planned, llm) -> None:
+    from backend.edit import check_today
+
+    edited, reply = check_today(planned, 2, SUN, llm)
+    assert edited is None and "clear sky" in reply
+
+
+def test_unknown_weather_is_said_not_guessed(planned, llm) -> None:
+    from backend.edit import check_today
+
+    unknown = {"description": None, "temp_c": None, "bad": False}
+    edited, reply = check_today(planned, 2, unknown, llm)
+    assert edited is None and "isn't available" in reply
+
+
+def test_rain_rearranges_only_today_with_the_facts(planned, llm, monkeypatch) -> None:
+    from backend.edit import check_today
+
+    prompts: list[str] = []
+    original = LLM.json
+
+    def spy(self: LLM, **kwargs: Any) -> Any:
+        prompts.append(kwargs["prompt"])
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(LLM, "json", spy)
+    edited, reply = check_today(planned, 2, RAIN, llm)
+
+    assert reply == ""
+    assert edited["meta"]["edit"]["days"] == [2]
+    assert any("moderate rain, 14°C" in p for p in prompts)
+    for before, after in zip(planned["itinerary"].days, edited["itinerary"].days):
+        if before.day != 2:
+            assert after == before
+
+
+def test_today_endpoint_needs_to_know_the_day(client: TestClient) -> None:
+    trip_id = _plan(client)["trip_id"]
+    response = client.post(f"/api/trips/{trip_id}/today", json={"provider": "mock"})
+    assert response.status_code == 400
+    assert "Which day" in response.json()["detail"]
+
+
+def test_today_endpoint_rearranges_in_the_rain(client: TestClient, monkeypatch) -> None:
+    from backend.adapters.base import AdapterResult
+    from backend.adapters.weather import WeatherAdapter
+
+    trip_id = _plan(client)["trip_id"]
+    monkeypatch.setattr(
+        WeatherAdapter, "fetch", lambda self, **_: AdapterResult(RAIN, "live", "openweather")
+    )
+
+    body = client.post(
+        f"/api/trips/{trip_id}/today", json={"today": 2, "provider": "mock"}
+    ).json()
+
+    assert body["type"] == "done"
+    assert body["parent_id"] == trip_id
+    assert body["edited"]["days"] == [2]
+    assert body["weather"]["description"] == "moderate rain"
+
+
+def test_an_edit_that_changes_nothing_says_so(planned, llm) -> None:
+    from backend.edit import check_today
+
+    # The mock itinerary ignores instructions, so the day comes back as it was.
+    edited, _ = check_today(planned, 2, RAIN, llm)
+    assert edited["meta"]["edit"]["changed"] is False

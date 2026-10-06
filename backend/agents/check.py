@@ -42,7 +42,7 @@ MAX_HOURS_PER_DAY = 9.0
 MAX_KM_PER_DAY = 60.0
 
 
-def _scheduled(title: str, attractions: list[Attraction]) -> Attraction | None:
+def match_attraction(title: str, attractions: list[Attraction]) -> Attraction | None:
     """Which researched attraction, if any, an itinerary block is a visit to."""
     lowered = title.lower()
     for attraction in attractions:
@@ -90,7 +90,7 @@ def find_problems(state: TravelState) -> list[str]:
 
         # A place can appear in two blocks ("Nishiki Market", "Lunch at Nishiki
         # Market"); it is still one visit.
-        matched = (_scheduled(b.title, attractions) for b in day.blocks)
+        matched = (match_attraction(b.title, attractions) for b in day.blocks)
         visits = list({a.name: a for a in matched if a}.values())
 
         hours = sum(a.est_hours for a in visits)

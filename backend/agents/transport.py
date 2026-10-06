@@ -1,30 +1,44 @@
 """Transport agent — how the traveller gets there and gets around.
 
-Options come from the transport adapter (mock by necessity — real fare data is
-gated). The model narrows and annotates them for this specific trip; it does
-not price flights, because a made-up fare stated confidently is worse than an
-honest band.
+Practical guidance, not fares. Live fare data needs a commercial agreement, and
+a made-up price stated confidently is worse than none, so this agent names the
+usual way in (main airports, rail hubs), the sensible ways to get around, and
+the passes or apps worth knowing about — and leaves prices to the booking site.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from backend.adapters.transport import TransportAdapter
 from backend.llm import LLM, LLMError, register_mock
-from backend.state import TransportLeg, TransportOutput, TravelState
+from backend.state import TransportOutput, TransportTip, TravelState
 
 TRANSPORT_SYSTEM = """You advise on travel to and around a destination.
 
 Return JSON:
-  {"local": [{"mode": str, "description": str}], "note": str}
+  {"arrival": [str], "local": [{"mode": str, "description": str}], "tips": [str]}
 
 Rules:
-- Keep 2 to 4 local transport modes from the candidates you are given, using the
-  same mode names, and rewrite each description for this specific trip length
-  and group size.
-- Do not invent fares. Costs are attached separately.
-- "note" is one short practical line — what to buy on arrival, or what to skip."""
+- "arrival": 1 or 2 lines on how visitors usually arrive — the main international
+  airport(s) or rail hubs, and how to get from there into town.
+- "local": 2 to 4 ways to get around, each with one sentence suited to this trip's
+  length, group size and the places in their schedule.
+- "tips": 1 to 3 short practical tips — passes, transit cards, apps, what to skip.
+- No prices, fares or timetables; you have no live data. Real place names only."""
+
+
+@register_mock("transport")
+def _mock_transport(context: dict[str, Any]) -> dict[str, Any]:
+    destination = context.get("destination", "the city")
+    return {
+        "arrival": [f"Most visitors fly into {destination}'s main international airport "
+                    "and take the rail link or a taxi into the centre."],
+        "local": [
+            {"mode": "Metro", "description": "Fastest across town; buy a stored-value card."},
+            {"mode": "Walking", "description": "Most central sights are close together."},
+        ],
+        "tips": ["Buy any multi-day transit pass at the airport on arrival."],
+    }
 
 
 def _change(state: TravelState) -> str:
@@ -33,28 +47,13 @@ def _change(state: TravelState) -> str:
     return f"\n\nThe traveller asked for this change: {request}" if request else ""
 
 
-@register_mock("transport")
-def _mock_transport(context: dict[str, Any]) -> dict[str, Any]:
-    candidates = context.get("local") or []
-    return {
-        "local": [{"mode": c["mode"], "description": c["description"]} for c in candidates[:4]],
-        "note": "Buy any multi-day transit pass at the airport on arrival.",
-    }
-
-
 def transport(state: TravelState, llm: LLM) -> dict[str, Any]:
-    """Graph node: propose how to get there and get around."""
+    """Graph node: advise how to get there and get around."""
     params = state["params"]
     assert params is not None
 
-    result = TransportAdapter().fetch(
-        destination=params.destination, travelers=params.travelers
-    )
-    inbound: list[dict[str, Any]] = result.data["inbound"]
-    local: list[dict[str, Any]] = result.data["local"]
-    by_mode = {c["mode"]: c for c in local}
-
-    listing = "\n".join(f"- {c['mode']}: {c['description']}" for c in local)
+    itinerary = state.get("itinerary")
+    stops = [b.title for d in itinerary.days for b in d.blocks] if itinerary else []
 
     try:
         raw = llm.json(
@@ -63,40 +62,30 @@ def transport(state: TravelState, llm: LLM) -> dict[str, Any]:
             prompt=(
                 f"Destination: {params.destination}\n"
                 f"Trip length: {params.duration_days or 'unspecified'} days\n"
-                f"Travellers: {params.travelers}\n\n"
-                f"Local transport candidates:\n{listing}"
+                f"Travellers: {params.travelers}\n"
+                f"Places in their schedule: {', '.join(stops[:20]) or 'not planned yet'}"
                 f"{_change(state)}"
             ),
-            context={"local": local},
+            context={"destination": params.destination},
             max_tokens=1024,
         )
         errors: list[str] = []
     except LLMError as exc:
-        raw, errors = {"local": []}, [f"transport: {exc}"]
+        raw, errors = {}, [f"transport: {exc}"]
 
-    chosen: list[TransportLeg] = []
-    for pick in raw.get("local") or []:
-        source = by_mode.get(str(pick.get("mode", "")).strip())
-        if source is None:
-            errors.append(f"transport: dropped {pick.get('mode')!r}, not a known mode")
+    local: list[TransportTip] = []
+    for item in raw.get("local") or []:
+        try:
+            local.append(TransportTip(**item))
+        except (TypeError, ValueError):
             continue
-        chosen.append(
-            TransportLeg(
-                mode=source["mode"],
-                description=str(pick.get("description") or source["description"]),
-                est_cost_usd=source["est_cost_usd"],
-            )
-        )
-
-    if not chosen:
-        chosen = [TransportLeg(**c) for c in local]
 
     return {
         "transport": TransportOutput(
-            inbound=[TransportLeg(**leg) for leg in inbound],
-            local=chosen,
+            arrival=[str(a) for a in raw.get("arrival") or []],
+            local=local,
+            tips=[str(t) for t in raw.get("tips") or []],
         ),
-        "sources": [f"{result.provider}:{result.source}"],
         "errors": errors,
         "trace": ["transport"],
     }

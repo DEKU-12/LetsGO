@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from backend.llm import LLM, LLMError, register_mock
-from backend.state import TravelState, TripParams
+from backend.state import ITINERARY, TravelState, TripParams
 
 PARSE_SYSTEM = """You extract structured trip parameters from a traveller's request.
 
@@ -152,6 +152,13 @@ def validate_plan(state: TravelState) -> dict[str, Any]:
         problems.append("final plan is missing or too short to be useful")
     elif "#" not in plan:
         problems.append("final plan has no headings — expected structured markdown")
+
+    # A plan with headings can still be missing its core: if the itinerary agent
+    # was asked for but every attempt failed (e.g. a daily rate limit), say so
+    # rather than letting the run look like a normal success.
+    itinerary = state.get("itinerary")
+    if ITINERARY in (state.get("route_plan") or []) and not (itinerary and itinerary.days):
+        problems.append("the day-by-day itinerary could not be generated")
 
     if problems:
         return {

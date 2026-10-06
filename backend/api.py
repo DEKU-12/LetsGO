@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -23,12 +24,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
+from backend.adapters.weather import WeatherAdapter
 from backend.config import PROJECT_ROOT
 from backend.db import get_trip, init_db, list_trips, load_state, save_trip
-from backend.edit import edit_trip
+from backend.edit import check_today, edit_trip, trip_day
 from backend.graph import WORKER_NODES, plan_trip, stream_trip
 from backend.llm import LLM, LLMError
-from backend.state import AGGREGATOR
+from backend.state import AGGREGATOR, TravelState
 
 #: What each node is doing, in words a person would use.
 AGENT_LABELS: dict[str, str] = {
@@ -54,6 +56,13 @@ class PlanRequest(BaseModel):
 
 class EditRequest(BaseModel):
     message: str = Field(min_length=1, max_length=MAX_REQUEST_CHARS)
+    #: The day of the trip the traveller is on, if they said.
+    today: int | None = Field(default=None, ge=1)
+    provider: str | None = None
+
+
+class TodayRequest(BaseModel):
+    today: int | None = Field(default=None, ge=1)
     provider: str | None = None
 
 
@@ -91,6 +100,7 @@ def _result(state: dict[str, Any], trip_id: int | None) -> dict[str, Any]:
         "trace": state.get("trace") or [],
         "sources": sorted(set(state.get("sources") or [])),
         "notes": state.get("errors") or [],
+        "days": len(state["itinerary"].days) if state.get("itinerary") else 0,
     }
 
 
@@ -144,34 +154,92 @@ async def edit_plan(trip_id: int, body: EditRequest) -> dict[str, Any]:
     Saves the result as a new trip whose ``parent_id`` is this one, so the old
     version stays put and undo is just going back to it. A message that is not
     an edit this plan can take returns ``type: "reply"`` and saves nothing.
+
+    ``today`` (the day of the trip the traveller is on) lets "rearrange today"
+    reach the right day; without it, the plan's start date is used if it has
+    one. When today is known, the live weather is passed along too.
     """
+    state, llm = await _editable(trip_id, body.provider)
+    today = body.today or trip_day(state, date.today())
+    conditions = await _weather_now(state) if today else None
+
+    started = time.monotonic()
+    edited, reply = await run_in_threadpool(
+        edit_trip, state, body.message, llm, today, conditions
+    )
+    return await _edit_result(trip_id, edited, reply, llm, started, body.message)
+
+
+@app.post("/api/trips/{trip_id}/today")
+async def help_today(trip_id: int, body: TodayRequest) -> dict[str, Any]:
+    """Trip-day help: check today's weather and rearrange today if it is bad.
+
+    Changes nothing, and says so, when the weather is fine. Needs to know which
+    day of the trip it is: ``today`` in the body, or the plan's start date.
+    """
+    state, llm = await _editable(trip_id, body.provider)
+    today = body.today or trip_day(state, date.today())
+    if today is None:
+        raise HTTPException(status_code=400, detail="Which day of the trip are you on?")
+    days = len(state["itinerary"].days) if state.get("itinerary") else 0
+    if not 1 <= today <= days:
+        raise HTTPException(status_code=400, detail=f"This plan has {days} days.")
+
+    conditions = await _weather_now(state)
+    started = time.monotonic()
+    edited, reply = await run_in_threadpool(check_today, state, today, conditions, llm)
+    result = await _edit_result(trip_id, edited, reply, llm, started, f"Check today (day {today})")
+    result["weather"] = conditions
+    return result
+
+
+async def _editable(trip_id: int, provider: str | None) -> tuple[TravelState, LLM]:
     state = await run_in_threadpool(load_state, trip_id)
     if state is None:
         raise HTTPException(status_code=404, detail="no such trip")
     if not state.get("final_plan"):
         raise HTTPException(status_code=400, detail="this trip has no plan to edit")
     try:
-        llm = LLM(provider=body.provider)
+        return state, LLM(provider=provider)
     except LLMError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    started = time.monotonic()
-    edited, reply = await run_in_threadpool(edit_trip, state, body.message, llm)
-    elapsed = time.monotonic() - started
 
+async def _weather_now(state: TravelState) -> dict[str, Any]:
+    result = await run_in_threadpool(
+        WeatherAdapter().fetch, destination=state["params"].destination, when="now"
+    )
+    return result.data
+
+
+async def _edit_result(
+    trip_id: int,
+    edited: TravelState | None,
+    reply: str,
+    llm: LLM,
+    started: float,
+    message: str,
+) -> dict[str, Any]:
+    """Save an edited plan as a new version, or pass the reply through."""
     if edited is None:
         return {"type": "reply", "reply": reply, "trip_id": trip_id}
 
+    elapsed = time.monotonic() - started
     new_id = await run_in_threadpool(
         save_trip, edited, provider=llm.provider, model=llm.model, duration_s=elapsed,
-        parent_id=trip_id, edit_message=body.message,
+        parent_id=trip_id, edit_message=message,
     )
     edit = (edited.get("meta") or {}).get("edit", {})
     return {
         **_result(edited, new_id),
         "type": "done",
         "parent_id": trip_id,
-        "edited": {"section": edit.get("agent"), "days": edit.get("days", [])},
+        "edited": {
+            "section": edit.get("agent"),
+            "days": edit.get("days", []),
+            "weather": edit.get("weather"),
+            "changed": edit.get("changed", True),
+        },
         "duration_s": round(elapsed, 1),
     }
 

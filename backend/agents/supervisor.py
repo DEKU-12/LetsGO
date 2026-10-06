@@ -43,8 +43,8 @@ output the traveller did not ask for wastes time and clutters the answer.
 Available agents:
   {RESEARCH}  - attractions, weather, practical/visa/safety notes for a place
   {ITINERARY}     - a day-by-day schedule; requires {RESEARCH} to have run
-  {ACCOMMODATION}  - lodging options within a budget
-  {TRANSPORT}     - flights, trains and local transport options
+  {ACCOMMODATION}  - where to stay: neighbourhoods that suit the traveller and budget
+  {TRANSPORT}     - how to arrive (airports, rail) and get around locally
 
 Return JSON:
   {{"agents": [...], "reasoning": "one sentence"}}

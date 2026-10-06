@@ -106,34 +106,50 @@ export function usePlanner() {
       );
   }, []);
 
-  /** Change the current plan; the server saves the result as a new version. */
-  const edit = useCallback(async (message: string, tripId: number) => {
+  /**
+   * Send a change to the server: a typed edit, or "check today". Either way
+   * the server saves a new version, or replies without changing anything.
+   */
+  const send = useCallback(async (url: string, body: object) => {
     setState((s) => ({ ...s, editing: true, reply: null, error: null }));
     try {
-      const response = await fetch(`/api/trips/${tripId}/edit`, {
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify(body),
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.detail ?? `edit failed (${response.status})`);
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail.detail ?? `request failed (${response.status})`);
       }
-      const body: EditResponse = await response.json();
+      const result: EditResponse = await response.json();
       setState((s) =>
-        body.type === "reply"
-          ? { ...s, editing: false, reply: body.reply }
+        result.type === "reply"
+          ? { ...s, editing: false, reply: result.reply }
           : {
               ...s,
               editing: false,
               history: s.result ? [...s.history, s.result] : s.history,
-              result: body,
+              result,
             },
       );
     } catch (err) {
       setState((s) => ({ ...s, editing: false, error: (err as Error).message }));
     }
   }, []);
+
+  /** Change the current plan. `today` is the trip day the traveller is on, if set. */
+  const edit = useCallback(
+    (message: string, tripId: number, today: number | null) =>
+      send(`/api/trips/${tripId}/edit`, { message, today }),
+    [send],
+  );
+
+  /** Check today's weather; the server rearranges today only if it is bad. */
+  const checkToday = useCallback(
+    (tripId: number, today: number) => send(`/api/trips/${tripId}/today`, { today }),
+    [send],
+  );
 
   /** Go back to the previous version. It is still saved; nothing is deleted. */
   const undo = useCallback(() => {
@@ -149,7 +165,7 @@ export function usePlanner() {
     setState(INITIAL);
   }, []);
 
-  return { ...state, plan, edit, undo, reset };
+  return { ...state, plan, edit, checkToday, undo, reset };
 }
 
 /** Add the agents the supervisor chose, keeping anything already finished. */

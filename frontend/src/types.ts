@@ -15,10 +15,24 @@ export interface PlanResult {
   trace: string[];
   sources: string[];
   notes: string[];
+  /** How many days the schedule has; 0 when there is no schedule. */
+  days: number;
   duration_s?: number;
   /** Set on a version made by an edit: the trip it was edited from. */
   parent_id?: number;
-  edited?: { section: string; days: number[] };
+  edited?: {
+    section: string;
+    days: number[];
+    weather?: Weather | null;
+    /** False when the agent reran but kept that part of the plan as it was. */
+    changed: boolean;
+  };
+}
+
+export interface Weather {
+  description: string | null;
+  temp_c: number | null;
+  bad: boolean;
 }
 
 /** What POST /api/trips/{id}/edit returns. */

@@ -85,15 +85,16 @@ def test_full_trip_routes_through_every_worker(llm: LLM) -> None:
     assert trace.index("aggregator") == len(trace) - 2
 
 
-def test_plan_labels_data_that_came_from_mocks(llm: LLM) -> None:
+def test_plan_has_no_invented_listings_or_prices(llm: LLM) -> None:
     state = plan_trip(
         "5 days in Japan, mid-range budget, need hotels and flights", llm
     )
     plan = state["final_plan"]
 
-    assert "lodging:mock" in state["sources"]
-    assert "not bookable" in plan
-    assert "not quotes" in plan
+    assert "## Where to stay" in plan
+    assert "## Getting there and around" in plan
+    assert "$" not in plan
+    assert not any(s.startswith(("lodging:", "transport:")) for s in state["sources"])
 
 
 def test_weather_only_question_does_not_book_a_hotel(llm: LLM) -> None:

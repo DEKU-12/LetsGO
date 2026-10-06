@@ -140,8 +140,8 @@ which is what the trajectory checks in `eval/` score.
 | `eval/places_benchmark.py` | Error rate of the place verifier itself |
 | `eval/grade.py` | Grade plans by hand, to validate the judge |
 | `eval/edits.py` | Plan edits: right section and days, change made, other days untouched |
-| `backend/edit.py` | Change a finished plan by chatting: reruns one agent, keeps unmentioned days as they were |
-| `backend/api.py` | FastAPI app: `/api/plan`, `/api/trips`, `/api/trips/{id}/edit`, `/ws/plan` |
+| `backend/edit.py` | Change a finished plan by chatting: reruns one agent, keeps unmentioned days as they were. Trip-day help: checks live weather and rearranges today if it is bad |
+| `backend/api.py` | FastAPI app: `/api/plan`, `/api/trips`, `/api/trips/{id}/edit`, `/api/trips/{id}/today`, `/ws/plan` |
 | `backend/db.py` | Trips and per-agent run records |
 | `frontend/` | React (Vite) chat UI |
 
@@ -153,13 +153,15 @@ which is what the trajectory checks in `eval/` score.
 - **The final plan is assembled deterministically** from structured state, so
   nothing reaches the user that an agent did not put into state first. The model
   writes only the opening paragraph, from facts already present.
-- **Mock data says it is mock.** Hotels and flights have no live provider —
-  real inventory needs a commercial agreement — so those sections of the plan
-  carry an explicit line saying the numbers are illustrative, and every run
-  ends with the provenance of each data source.
+- **Advice, not fake listings.** Real hotel and flight inventory needs a
+  commercial agreement, so the plan does not pretend to have it. "Where to
+  stay" recommends neighbourhoods (checked on a map, like attractions) and
+  "Getting there and around" gives practical guidance — no invented hotel
+  names, prices or fares. Every run ends with the provenance of each data
+  source.
 - **Agents choose, they do not invent.** The itinerary may only schedule
-  attractions the research agent found; accommodation and transport may only
-  pick from the adapter's shortlist. Anything else is dropped and recorded.
+  attractions the research agent found. Places the model names — attractions
+  and neighbourhoods — are verified against a map dataset.
 - **Model backends are swappable** (`backend/llm.py`): `anthropic` (spec default),
   `groq` (cheap iteration), `mock` (no keys). Selected automatically.
 

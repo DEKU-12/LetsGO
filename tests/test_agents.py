@@ -66,56 +66,48 @@ def test_itinerary_blocks_stay_in_time_order(llm: LLM) -> None:
 # -- accommodation ----------------------------------------------------------
 
 
-def test_accommodation_respects_the_budget(llm: LLM) -> None:
-    result = accommodation(_state(), llm)
-    output = result["accommodation"]
+def test_accommodation_recommends_areas_not_listings(llm: LLM) -> None:
+    output = accommodation(_state(), llm)["accommodation"]
 
-    assert output.options
-    assert output.nightly_budget_usd
-    assert all(o.price_per_night_usd <= output.nightly_budget_usd * 1.25 for o in output.options)
-
-
-def test_accommodation_records_that_its_data_is_mock(llm: LLM) -> None:
-    assert accommodation(_state(), llm)["sources"] == ["lodging:mock"]
+    assert output.areas
+    assert all(a.name and a.why for a in output.areas)
+    # No fake inventory: the model has nowhere to put a hotel name or a price.
+    assert not hasattr(output, "options")
 
 
-def test_accommodation_drops_options_not_on_the_shortlist(llm: LLM, monkeypatch) -> None:
-    """The model must choose from the candidates, not invent a hotel."""
+def test_accommodation_passes_an_edit_request_to_the_model(llm: LLM, monkeypatch) -> None:
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        LLM, "json", lambda self, **kw: prompts.append(kw["prompt"]) or {"areas": []}
+    )
+    accommodation(_state(edit_request="somewhere quieter"), llm)
+    assert "asked for this change: somewhere quieter" in prompts[0]
+
+
+def test_accommodation_skips_malformed_areas(llm: LLM, monkeypatch) -> None:
     monkeypatch.setattr(
         LLM, "json",
-        lambda self, **kw: {"options": [{"name": "Hotel Imaginary", "why": "made up"}]},
+        lambda self, **kw: {"areas": [{"name": "Asakusa", "why": "ok"}, {"why": "no name"}]},
     )
-    result = accommodation(_state(), llm)
-
-    assert all(o.name != "Hotel Imaginary" for o in result["accommodation"].options)
-    assert any("not on the shortlist" in e for e in result["errors"])
+    output = accommodation(_state(), llm)["accommodation"]
+    assert [a.name for a in output.areas] == ["Asakusa"]
 
 
 # -- transport --------------------------------------------------------------
 
 
-def test_transport_returns_both_legs_and_flags_mock_data(llm: LLM) -> None:
-    result = transport(_state(), llm)
+def test_transport_gives_arrival_and_local_advice(llm: LLM) -> None:
+    output = transport(_state(), llm)["transport"]
 
-    assert result["transport"].inbound
-    assert result["transport"].local
-    assert result["sources"] == ["transport:mock"]
-
-
-def test_transport_scales_inbound_cost_with_group_size(llm: LLM) -> None:
-    params = TripParams(destination="Japan", duration_days=3, travelers=1)
-    one = transport(_state(params=params), llm)["transport"].inbound[0].est_cost_usd
-    two = transport(_state(), llm)["transport"].inbound[0].est_cost_usd
-
-    assert two == pytest.approx(one * 2)
+    assert output.arrival
+    assert output.local
+    assert not hasattr(output, "inbound")  # no fares, real or invented
 
 
-def test_transport_drops_unknown_modes(llm: LLM, monkeypatch) -> None:
+def test_transport_skips_malformed_modes(llm: LLM, monkeypatch) -> None:
     monkeypatch.setattr(
         LLM, "json",
-        lambda self, **kw: {"local": [{"mode": "Teleporter", "description": "instant"}]},
+        lambda self, **kw: {"local": [{"mode": "Metro", "description": "fast"}, {"mode": "x"}]},
     )
-    result = transport(_state(), llm)
-
-    assert all(leg.mode != "Teleporter" for leg in result["transport"].local)
-    assert any("not a known mode" in e for e in result["errors"])
+    output = transport(_state(), llm)["transport"]
+    assert [t.mode for t in output.local] == ["Metro"]

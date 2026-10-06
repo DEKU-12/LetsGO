@@ -1,34 +1,70 @@
-"""Accommodation agent — lodging inside the stated budget.
+"""Accommodation agent — which neighbourhoods to stay in.
 
-Candidates come from the lodging adapter (mock by necessity — see that module).
-The model's job is selection and justification, not invention: it picks from
-the shortlist and says why each one suits this traveller. Anything it names
-that was not on the shortlist is dropped.
+Advice, not listings. Real hotel inventory and prices need a commercial
+agreement, and a plan that shows invented hotels with invented prices teaches
+the reader to distrust the rest of it. So this agent recommends *areas* — the
+part of "where to stay" a well-read friend could actually tell you — and leaves
+choosing a property to whatever booking site the traveller already uses.
+
+Area names come from the model, so they are checked on a map the same way the
+research agent's attractions are: "unverified" means "could not confirm", not
+"does not exist".
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from backend.adapters.lodging import NIGHTLY_BASELINE, LodgingAdapter
+from backend.adapters.places import PlacesAdapter
 from backend.llm import LLM, LLMError, register_mock
-from backend.state import AccommodationOutput, LodgingOption, TravelState
+from backend.state import AccommodationOutput, StayArea, TravelState
 
-#: How far above the nightly target a stay may go before it is dropped.
-BUDGET_TOLERANCE = 1.25
-
-ACCOMMODATION_SYSTEM = """You choose where a traveller should stay.
+ACCOMMODATION_SYSTEM = """You advise a traveller on which neighbourhoods to stay in.
 
 Return JSON:
-  {"options": [{"name": str, "why": str}], "note": str}
+  {"areas": [{"name": str, "why": str, "price_level": "budget" | "mid-range" | "luxury"}],
+   "tips": [str]}
 
 Rules:
-- Choose 3 options from the candidate list you are given. Use the names exactly.
-- "why" is one sentence tying the choice to this traveller's stated interests,
-  budget and trip length. Do not restate the price; it is shown separately.
-- Prefer options at or below the nightly target. Include one above it only if
-  it is clearly worth the difference, and say why in that sentence.
-- "note" is one short line of practical advice about staying in this place."""
+- 2 or 3 real neighbourhoods or districts at the destination. Use the name as it
+  appears on a map. If the trip covers several cities, cover the main ones.
+- "why" is one sentence tying the area to this traveller: their interests, the
+  places in their schedule, their budget.
+- "price_level" is the typical level of places to stay in that area.
+- Do not name hotels and do not state prices; you have no live inventory.
+- "tips" is 1 to 3 short, practical booking tips for this destination (when to
+  book, what to look for). No prices."""
+
+_MOCK_AREAS: dict[str, list[tuple[str, str, str]]] = {
+    "japan": [
+        ("Asakusa", "Traditional Tokyo, walking distance to Senso-ji.", "mid-range"),
+        ("Shinjuku", "Transport hub with late-night food everywhere.", "mid-range"),
+        ("Gion", "Kyoto's old quarter, close to the temples.", "luxury"),
+    ],
+    "italy": [
+        ("Trastevere", "Evening food scene on the doorstep.", "mid-range"),
+        ("Monti", "Central, a short walk to the Colosseum.", "mid-range"),
+    ],
+    "france": [
+        ("Le Marais", "Central, walkable, full of galleries and food.", "mid-range"),
+        ("Saint-Germain-des-Prés", "Classic Left Bank, near the museums.", "luxury"),
+    ],
+}
+
+_MOCK_GENERIC = [
+    ("Old town", "Walkable and close to most sights.", "mid-range"),
+    ("Station district", "Cheaper and well connected.", "budget"),
+]
+
+
+@register_mock("accommodation")
+def _mock_accommodation(context: dict[str, Any]) -> dict[str, Any]:
+    destination = str(context.get("destination", "")).lower()
+    rows = next((v for k, v in _MOCK_AREAS.items() if k in destination), _MOCK_GENERIC)
+    return {
+        "areas": [{"name": n, "why": w, "price_level": p} for n, w, p in rows],
+        "tips": ["Book refundable rates until your dates are fixed."],
+    }
 
 
 def _change(state: TravelState) -> str:
@@ -37,39 +73,19 @@ def _change(state: TravelState) -> str:
     return f"\n\nThe traveller asked for this change: {request}" if request else ""
 
 
-@register_mock("accommodation")
-def _mock_accommodation(context: dict[str, Any]) -> dict[str, Any]:
-    """Cheapest-three selection standing in for the model when no key is set."""
-    candidates = sorted(
-        context.get("candidates") or [],
-        key=lambda c: c.get("price_per_night_usd", 0),
-    )
-    return {
-        "options": [{"name": c["name"], "why": c.get("why", "")} for c in candidates[:3]],
-        "note": "Book refundable rates; prices in this shortlist are illustrative.",
-    }
-
-
 def accommodation(state: TravelState, llm: LLM) -> dict[str, Any]:
-    """Graph node: shortlist places to stay."""
+    """Graph node: recommend neighbourhoods to stay in."""
     params = state["params"]
     assert params is not None
 
-    nights = max((params.duration_days or 1) - 1, 1)
-    result = LodgingAdapter().fetch(
-        destination=params.destination,
-        budget=params.budget,
-        nights=nights,
-    )
-    candidates: list[dict[str, Any]] = result.data["options"]
-    target: float = result.data["nightly_budget_usd"]
-
-    by_name = {c["name"]: c for c in candidates}
-    listing = "\n".join(
-        f"- {c['name']} ({c['area']}, ${c['price_per_night_usd']:.0f}/night, "
-        f"rated {c['rating']}): {c['why']}"
-        for c in candidates
-    )
+    # Staying near what you will actually do is most of the advice, so give
+    # the model the schedule when there is one, else the researched places.
+    itinerary = state.get("itinerary")
+    research = state.get("research")
+    if itinerary and itinerary.days:
+        anchors = [b.title for d in itinerary.days for b in d.blocks]
+    else:
+        anchors = [a.name for a in research.attractions] if research else []
 
     try:
         raw = llm.json(
@@ -77,53 +93,40 @@ def accommodation(state: TravelState, llm: LLM) -> dict[str, Any]:
             system=ACCOMMODATION_SYSTEM,
             prompt=(
                 f"Destination: {params.destination}\n"
-                f"Budget level: {params.budget or 'unstated'} "
-                f"(target ${target:.0f}/night)\n"
-                f"Nights: {nights}   Travellers: {params.travelers}\n"
-                f"Interests: {', '.join(params.preferences) or 'none stated'}\n\n"
-                f"Candidates:\n{listing}"
+                f"Budget level: {params.budget or 'unstated'}\n"
+                f"Nights: {max((params.duration_days or 1) - 1, 1)}   "
+                f"Travellers: {params.travelers}\n"
+                f"Interests: {', '.join(params.preferences) or 'none stated'}\n"
+                f"Places they plan to visit: {', '.join(anchors[:20]) or 'not planned yet'}"
                 f"{_change(state)}"
             ),
-            context={"candidates": candidates, "target": target},
-            max_tokens=1536,
+            context={"destination": params.destination},
+            max_tokens=1024,
         )
         errors: list[str] = []
     except LLMError as exc:
-        raw, errors = {"options": []}, [f"accommodation: {exc}"]
+        raw, errors = {}, [f"accommodation: {exc}"]
 
-    chosen: list[LodgingOption] = []
-    for pick in raw.get("options") or []:
-        source = by_name.get(str(pick.get("name", "")).strip())
-        if source is None:
-            errors.append(f"accommodation: dropped {pick.get('name')!r}, not on the shortlist")
+    areas: list[StayArea] = []
+    for item in raw.get("areas") or []:
+        try:
+            areas.append(StayArea(**item))
+        except (TypeError, ValueError):
             continue
-        chosen.append(
-            LodgingOption(
-                name=source["name"],
-                area=source["area"],
-                price_per_night_usd=source["price_per_night_usd"],
-                rating=source["rating"],
-                why=str(pick.get("why") or source["why"]),
-            )
-        )
 
-    # If the model picked nothing usable, fall back to the cheapest that fit.
-    if not chosen:
-        ceiling = target * BUDGET_TOLERANCE
-        affordable = [c for c in candidates if c["price_per_night_usd"] <= ceiling]
-        chosen = [
-            LodgingOption(**c)
-            for c in sorted(affordable, key=lambda c: c["price_per_night_usd"])[:3]
-        ]
-
-    if params.budget and any(o.price_per_night_usd > target * BUDGET_TOLERANCE for o in chosen):
-        errors.append(
-            f"accommodation: a selected stay exceeds the {params.budget} target of ${target:.0f}"
-        )
+    sources: list[str] = []
+    if areas:
+        places = PlacesAdapter().fetch(destination=params.destination, names=[a.name for a in areas])
+        if not places.is_mock:
+            sources.append(f"{places.provider}:{places.source}")
+            for area in areas:
+                area.verified = places.data["confirmed"].get(area.name) is not None
 
     return {
-        "accommodation": AccommodationOutput(options=chosen, nightly_budget_usd=target),
-        "sources": [f"{result.provider}:{result.source}"],
+        "accommodation": AccommodationOutput(
+            areas=areas, tips=[str(t) for t in raw.get("tips") or []]
+        ),
+        "sources": sources,
         "errors": errors,
         "trace": ["accommodation"],
     }

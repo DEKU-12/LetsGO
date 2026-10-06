@@ -15,16 +15,23 @@ An edit reruns only the part of the plan it is about, not the whole graph:
    writes the plan again.
 
 The caller saves the result as a new version, so an edit can always be undone.
+
+**Trip-day help** is the same machinery with two facts added: which day of the
+trip it is, so "rearrange today" reaches the right day, and the weather right
+now. ``check_today`` looks at the live weather and, if it is bad for being
+outside, rearranges today without being asked; if it is fine, it says so and
+changes nothing.
 """
 
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any
 
 from backend.agents.accommodation import accommodation
 from backend.agents.aggregator import aggregator
-from backend.agents.check import MAX_RETRIES, check_itinerary
+from backend.agents.check import MAX_RETRIES, match_attraction, check_itinerary
 from backend.agents.itinerary import itinerary
 from backend.agents.transport import transport
 from backend.graph import apply_update
@@ -50,6 +57,8 @@ Rules:
 - "days" lists the day numbers the change is about. Use [] when it applies to the
   whole trip, and always [] unless "agent" is {ITINERARY}. "the last day" is the
   final day number you are given.
+- If you are told which day of the trip it is today, "today", "this morning" and
+  "tonight" mean that day and "tomorrow" means the day after.
 - "instruction" restates the change as one direct instruction to the planner.
 - "reply" is empty unless "agent" is {NONE}; then it is one friendly sentence
   saying why this cannot be done as an edit and what to do instead."""
@@ -62,6 +71,9 @@ _DAYS = re.compile(r"\bdays\s+(\d+)\s+(?:and|&)\s+(\d+)", re.IGNORECASE)
 def _mock_route(context: dict[str, Any]) -> dict[str, Any]:
     """Keyword router standing in for the model when no API key is set."""
     text = str(context.get("message", "")).lower()
+    if context.get("today"):
+        today = int(context["today"])
+        text = text.replace("tomorrow", f"day {today + 1}").replace("today", f"day {today}")
     if any(w in text for w in ("hotel", "stay", "hostel", "room")):
         return {"agent": ACCOMMODATION, "days": [], "instruction": text, "reply": ""}
     if any(w in text for w in ("taxi", "train", "flight", "bus", "transport", "metro")):
@@ -74,8 +86,14 @@ def _mock_route(context: dict[str, Any]) -> dict[str, Any]:
     return {"agent": ITINERARY, "days": days, "instruction": text, "reply": ""}
 
 
-def route_edit(state: TravelState, message: str, llm: LLM) -> dict[str, Any]:
-    """Decide what an edit message is about. Always returns a usable decision."""
+def route_edit(
+    state: TravelState, message: str, llm: LLM, today: int | None = None
+) -> dict[str, Any]:
+    """Decide what an edit message is about. Always returns a usable decision.
+
+    `today` is the day of the trip the traveller is on, if known, so "today"
+    and "tomorrow" in the message can be resolved to day numbers.
+    """
     params = state["params"]
     days_planned = len(state["itinerary"].days) if state.get("itinerary") else 0
     sections = [s for s in (ITINERARY, ACCOMMODATION, TRANSPORT) if state.get(s)]
@@ -86,10 +104,11 @@ def route_edit(state: TravelState, message: str, llm: LLM) -> dict[str, Any]:
             system=EDIT_SYSTEM,
             prompt=(
                 f"Trip: {params.destination}, {days_planned or 'no'} days planned\n"
-                f"Sections in the plan: {', '.join(sections) or 'none'}\n\n"
-                f"Change request: {message}"
+                f"Sections in the plan: {', '.join(sections) or 'none'}\n"
+                + (f"Today is day {today} of the trip.\n" if today else "")
+                + f"\nChange request: {message}"
             ),
-            context={"message": message},
+            context={"message": message, "today": today},
             max_tokens=512,
         )
     except LLMError as exc:
@@ -163,18 +182,124 @@ def _rerun_itinerary(
     return True
 
 
-def edit_trip(state: TravelState, message: str, llm: LLM) -> tuple[TravelState | None, str]:
+#: Categories (from the research agent) that are mostly outdoors.
+OUTDOOR = {"nature", "neighbourhood"}
+
+
+def trip_day(state: TravelState, on: date) -> int | None:
+    """Which day of the trip `on` is, if the plan has a start date."""
+    params = state.get("params")
+    itinerary_ = state.get("itinerary")
+    if not params or not params.start_date or not itinerary_:
+        return None
+    try:
+        start = date.fromisoformat(params.start_date)
+    except ValueError:
+        return None
+    day = (on - start).days + 1
+    return day if 1 <= day <= len(itinerary_.days) else None
+
+
+def weather_brief(state: TravelState, day: int, conditions: dict[str, Any]) -> str:
+    """Today's weather, plus the facts the planner needs to work around it.
+
+    Which of today's stops are outdoors, and which indoor places the research
+    found that are not scheduled anywhere yet — so a rainy-day swap can use
+    real alternatives instead of inventing them.
+    """
+    research = state.get("research")
+    itinerary_ = state.get("itinerary")
+    if not research or not itinerary_:
+        return ""
+    attractions = research.attractions
+
+    today = next((d for d in itinerary_.days if d.day == day), None)
+    today_stops = [a for a in (match_attraction(b.title, attractions) for b in today.blocks) if a] if today else []
+    scheduled = {
+        a.name
+        for d in itinerary_.days
+        for a in (match_attraction(b.title, attractions) for b in d.blocks)
+        if a
+    }
+    outdoor = [a.name for a in today_stops if a.category in OUTDOOR]
+    spare = [f"{a.name} ({a.category})" for a in attractions
+             if a.name not in scheduled and a.category not in OUTDOOR]
+
+    return (
+        f" Weather right now: {conditions['description']}, {conditions['temp_c']:g}°C."
+        + (f" Outdoor stops on day {day}: {', '.join(outdoor)}." if outdoor else "")
+        + (f" Researched places not scheduled on any day: {', '.join(spare)}." if spare else "")
+    )
+
+
+def edit_trip(
+    state: TravelState,
+    message: str,
+    llm: LLM,
+    today: int | None = None,
+    conditions: dict[str, Any] | None = None,
+) -> tuple[TravelState | None, str]:
     """Apply one change to a finished plan.
+
+    `today` (the day of the trip the traveller is on) and `conditions` (live
+    weather, from the weather adapter with ``when="now"``) are optional; with
+    them, "it's raining, rearrange today" reaches the right day and the planner
+    knows the actual weather.
 
     Returns ``(new_state, "")`` on success, or ``(None, reply)`` when the
     message is not an edit this plan can take — the reply says why.
     """
-    state = TravelState(**state)  # never mutate the caller's copy
-    state.update(trace=[], errors=[], itinerary_feedback=[], check_attempts=0, edit_request=None)
-
-    decision = route_edit(state, message, llm)
+    decision = route_edit(state, message, llm, today)
     if decision["agent"] == NONE:
         return None, decision["reply"]
+    if (
+        decision["agent"] == ITINERARY
+        and today in (decision["days"] or [today])
+        and conditions
+        and conditions.get("description")
+    ):
+        decision["instruction"] += weather_brief(state, today, conditions)
+        decision["weather"] = conditions
+    return _apply(state, decision, message, llm)
+
+
+def check_today(
+    state: TravelState, today: int, conditions: dict[str, Any], llm: LLM
+) -> tuple[TravelState | None, str]:
+    """Look at today's weather and rearrange today only if it calls for it.
+
+    No model call decides whether to act: "is it raining" is a fact from the
+    weather service, not a judgement. Returns ``(None, reply)`` when nothing
+    needs changing or the weather is unknown.
+    """
+    if not conditions.get("description"):
+        return None, "Live weather isn't available (no OpenWeather key is set), so I can't check today."
+    summary = f"{conditions['description']}, {conditions['temp_c']:g}°C"
+    if not conditions.get("bad"):
+        return None, f"It's {summary} — day {today} works as planned."
+    if not (state.get("research") and state["research"].attractions):
+        return None, f"It's {summary}, but this plan has no schedule to rearrange."
+
+    decision = {
+        "agent": ITINERARY,
+        "days": [today],
+        "instruction": (
+            f"Rearrange day {today} for the weather: replace outdoor stops with indoor "
+            "ones, keeping the day's pace and meals." + weather_brief(state, today, conditions)
+        ),
+        "reply": "",
+        "weather": conditions,
+    }
+    return _apply(state, decision, f"Check today (day {today})", llm)
+
+
+def _apply(
+    state: TravelState, decision: dict[str, Any], message: str, llm: LLM
+) -> tuple[TravelState | None, str]:
+    """Rerun the one agent a routed edit is about, then rewrite the plan."""
+    before = state.get(decision["agent"])
+    state = TravelState(**state)  # never mutate the caller's copy
+    state.update(trace=[], errors=[], itinerary_feedback=[], check_attempts=0, edit_request=None)
 
     meta = dict(state.get("meta") or {})
     meta["edit"] = {"message": message, **decision}
@@ -206,6 +331,10 @@ def edit_trip(state: TravelState, message: str, llm: LLM) -> tuple[TravelState |
         if _model_failed(update, agent, llm):
             return None, FAILED_REPLY
         apply_update(state, update)
+
+    # Did anything actually change? A model can reasonably decide a day is
+    # already fine for the weather; the reply should say so, not "updated".
+    state["meta"]["edit"]["changed"] = state.get(agent) != before
 
     apply_update(state, aggregator(state, llm))
     apply_update(state, validate_plan(state))

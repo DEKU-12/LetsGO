@@ -204,6 +204,26 @@ textarea:disabled { opacity: 0.6; }
 }
 .edit input:disabled { opacity: 0.6; }
 
+.today {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.today select {
+  margin-left: 0.3rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
 .edit-note {
   margin: 0.6rem 0 0;
   font-size: 0.85rem;

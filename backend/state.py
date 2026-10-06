@@ -78,28 +78,33 @@ class ItineraryOutput(BaseModel):
     days: list[ItineraryDay] = Field(default_factory=list)
 
 
-class LodgingOption(BaseModel):
+class StayArea(BaseModel):
+    """A neighbourhood to stay in. Advice about where, not a listing."""
+
     name: str
-    area: str = ""
-    price_per_night_usd: float = 0.0
-    rating: float | None = None
     why: str = ""
+    #: Typical price level of places to stay there, from general knowledge.
+    price_level: Budget | None = None
+    #: Same meaning as Attraction.verified: confirmed on a map, not confirmed,
+    #: or unchecked.
+    verified: bool | None = None
 
 
 class AccommodationOutput(BaseModel):
-    options: list[LodgingOption] = Field(default_factory=list)
-    nightly_budget_usd: float | None = None
+    areas: list[StayArea] = Field(default_factory=list)
+    tips: list[str] = Field(default_factory=list)
 
 
-class TransportLeg(BaseModel):
+class TransportTip(BaseModel):
     mode: str
     description: str
-    est_cost_usd: float | None = None
 
 
 class TransportOutput(BaseModel):
-    inbound: list[TransportLeg] = Field(default_factory=list)
-    local: list[TransportLeg] = Field(default_factory=list)
+    #: How travellers usually arrive: main airports, rail hubs.
+    arrival: list[str] = Field(default_factory=list)
+    local: list[TransportTip] = Field(default_factory=list)
+    tips: list[str] = Field(default_factory=list)
 
 
 class TravelState(TypedDict, total=False):
