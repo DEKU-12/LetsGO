@@ -111,3 +111,9 @@ def test_saved_trip_state_comes_back_with_its_models() -> None:
 
 def test_loading_an_unknown_trip_returns_none() -> None:
     assert load_state(10**9) is None
+
+
+def test_one_place_in_two_blocks_counts_once() -> None:
+    places = [_place("Nishiki Market", 5, at=KYOTO), _place("Nijo Castle", 3, at=KYOTO)]
+    state = _state([["Nishiki Market", "Lunch at Nishiki Market", "Nijo Castle"]], places)
+    assert find_problems(state) == []

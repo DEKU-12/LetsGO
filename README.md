@@ -46,17 +46,25 @@ To use a real model, copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`
 uv run python -m eval.run
 ```
 
-Latest run, `claude-sonnet-5`, 19 labeled requests:
+19 labeled requests, on two model backends. The columns are separate runs on
+different models, months apart — read each on its own, not as a comparison.
 
-| Metric | Result |
-| --- | --- |
-| Agent-selection exact match | **19/19 (100%)** |
-| Micro precision / recall / F1 | 1.00 / 1.00 / 1.00 |
-| Supervisor plans needing repair | 0% |
-| Trajectory checks clean | 3/3 |
-| Mean plan quality (LLM judge) | 3.6 / 5 |
-| Recommended places confirmed against a map dataset | 65% (a floor — see below) |
-| **Judge validated against human grades** | **not yet — see below** |
+| Metric | `claude-sonnet-5` (Aug 2026) | Groq `gpt-oss-120b` (Oct 2026) |
+| --- | --- | --- |
+| Agent-selection exact match | **19/19 (100%)** | **19/19 (100%)** |
+| Micro precision / recall / F1 | 1.00 / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 |
+| Supervisor plans needing repair | 0% | 5.3% (1/19) |
+| Trajectory checks clean | 3/3 | 5/5 |
+| Schedules sent back by the itinerary check | — (check added later) | 1/5 |
+| Mean plan quality (LLM judge) | 3.6 / 5 | 4.6 / 5 |
+| Recommended places confirmed against a map dataset | 65% | 75% (a floor — see below) |
+| **Judge validated against human grades** | **not yet** | **not yet — see below** |
+
+The Groq judge scores its own model's plans, and it has not been checked
+against a human, so its 4.6 is not evidence that Groq plans are better than
+Claude's. Two back-to-back Groq runs gave 4.4 and 4.6, and 82% and 75% of places
+confirmed: differences that size are run-to-run noise. The Claude column predates
+the country-wide place search described below.
 
 **Read the 100% sceptically.** It does not mean the router is perfect; it means
 this 19-case dataset has stopped discriminating. The honest reading is "no known
@@ -73,8 +81,10 @@ for building evaluation early rather than last.
 **Places are verified, not trusted.** Every attraction the model recommends is
 checked against Geoapify — does a place by that name exist at that destination?
 The verifier itself is benchmarked (`uv run python -m eval.places_benchmark`):
-on 18 labelled cases it confirmed 12/12 real places and rejected 6/6 invented
-ones. Precision is the number that matters there: a false positive would launder
+on 31 labelled cases across two cities and two countries it confirmed 21/21 real
+places and rejected 10/10 invented ones. Country-level requests ("5 days in
+Japan") used to confirm almost nothing, because the search was a 60 km circle
+around the country's midpoint; they are now searched country-wide. Precision is the number that matters there: a false positive would launder
 a hallucination as verified fact.
 
 The 65% in the table is a **lower bound**, not an estimate of how often the model
@@ -88,7 +98,7 @@ city hall, while Fushimi Inari and Kinkaku-ji do not appear at all. OpenStreetMa
 knows what is near a point, not what is worth seeing. Sourcing attractions from
 it would have made the plans worse.
 
-**The judge is not yet validated.** Its 3.5/5 is currently an unverified number,
+**The judge is not yet validated.** Its scores (3.6 and 4.6 above) are unverified numbers,
 and the report says so rather than presenting it as a result. Validation needs
 human-graded plans:
 

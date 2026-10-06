@@ -13,8 +13,8 @@ confirmation the plan never claimed to have.
 
 Honest caveat: the matching thresholds in `adapters/places.py` were tuned partly
 against this set, so a perfect score here is a sanity check, not an unbiased
-estimate. It is 18 cases across two cities — treat it as "no known failure
-mode", not "solved".
+estimate. It is 31 cases across two cities and two countries — treat it as
+"no known failure mode", not "solved".
 """
 
 from __future__ import annotations
@@ -44,6 +44,25 @@ BENCHMARK: dict[str, tuple[tuple[str, bool], ...]] = {
         ("Philosopher's Path", True),
         ("Kyoto Museum of Invented History", False),
         ("Temple of the Eternal Noodle", False),
+    ),
+    # Country-level destinations: real places hundreds of km apart, and
+    # invented ones that a country-wide search has more chances to mismatch.
+    "Japan": (
+        ("Senso-ji Temple", True),
+        ("Fushimi Inari Taisha", True),
+        ("Osaka Castle", True),
+        ("Itsukushima Shrine", True),
+        ("Hiroshima Peace Memorial Park", True),
+        ("Osaka Museum of Floating Lanterns", False),
+        ("Hokkaido Glass Volcano Park", False),
+    ),
+    "Italy": (
+        ("Colosseum", True),
+        ("Uffizi Gallery", True),
+        ("Rialto Bridge", True),
+        ("Leaning Tower of Pisa", True),
+        ("Basilica of the Silent Moon", False),
+        ("Venice Museum of Paper Boats", False),
     ),
 }
 

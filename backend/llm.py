@@ -55,6 +55,13 @@ def _first_json_object(raw: str) -> str:
 # --------------------------------------------------------------------------
 
 
+#: Retries on rate limits and transient errors. The SDKs wait between tries,
+#: honouring the provider's retry-after hint, but stop after 2 by default.
+#: Groq's free tier resets its per-minute token budget once a minute, and 8
+#: tries with the SDK's backoff covers that window.
+MAX_RETRIES = 8
+
+
 @dataclass
 class _Anthropic:
     model: str
@@ -72,6 +79,7 @@ class _Anthropic:
             # these requests somewhere unexpected.
             base_url="https://api.anthropic.com",
             default_headers=headers or None,
+            max_retries=MAX_RETRIES,
         )
 
     def __call__(self, system: str, prompt: str, max_tokens: int) -> str:
@@ -91,7 +99,7 @@ class _Groq:
     def __post_init__(self) -> None:
         from groq import Groq
 
-        self._client = Groq(api_key=settings.groq_api_key)
+        self._client = Groq(api_key=settings.groq_api_key, max_retries=MAX_RETRIES)
 
     def __call__(self, system: str, prompt: str, max_tokens: int) -> str:
         response = self._client.chat.completions.create(

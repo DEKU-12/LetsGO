@@ -76,7 +76,13 @@ def main() -> int:
     print(f"   {'needed repair':<22}{_pct(selection.repaired):>22}"
           "   supervisor plans the code had to fix")
 
-    wrong = [r for r in selection.results if not r.exact]
+    failed = [r for r in selection.results if r.error]
+    if failed:
+        print(f"\n   WARNING — {len(failed)}/{len(selection.results)} requests never got a "
+              "routing decision, so the numbers above are not a measurement.")
+        print(f"   first failure: {failed[0].error[:200]}")
+
+    wrong = [r for r in selection.results if not r.exact and not r.error]
     if wrong:
         print("\n   misroutes:")
         for result in wrong:
@@ -108,7 +114,10 @@ def main() -> int:
                                   [a.name for a in checked if not a.verified]))
 
             if result.error:
-                print(f"   {case.id:<26} judging failed: {result.error}")
+                reason = result.error
+                if not plan and state.get("errors"):
+                    reason = f"no plan — {state['errors'][0][:160]}"
+                print(f"   {case.id:<26} judging failed: {reason}")
                 continue
             detail = "  ".join(f"{k[:4]} {v}" for k, v in result.scores.items())
             print(f"   {case.id:<26} {result.overall:>4.1f}/5   {detail}")

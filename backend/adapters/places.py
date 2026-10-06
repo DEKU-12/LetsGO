@@ -124,7 +124,13 @@ class PlacesAdapter(Adapter):
 
     # -- live ---------------------------------------------------------------
 
-    def _geocode(self, client: httpx.Client, destination: str) -> tuple[float, float]:
+    def _geocode(self, client: httpx.Client, destination: str) -> tuple[float, float, str]:
+        """Locate the destination, and pick the search area to verify within.
+
+        A city is searched within ``SEARCH_RADIUS_M`` of its centre. A country
+        is searched across the whole country: Senso-ji and Fushimi Inari are
+        370 km apart, and both are "in Japan".
+        """
         response = client.get(
             "https://api.geoapify.com/v1/geocode/search",
             params={"text": destination, "limit": 1, "lang": "en", "apiKey": self.api_key},
@@ -134,11 +140,16 @@ class PlacesAdapter(Adapter):
         if not features:
             raise ValueError(f"Geoapify could not locate {destination!r}")
         properties = features[0]["properties"]
-        return properties["lat"], properties["lon"]
+        lat, lon = properties["lat"], properties["lon"]
+        if properties.get("result_type") == "country" and properties.get("country_code"):
+            area = f"countrycode:{properties['country_code']}"
+        else:
+            area = f"circle:{lon},{lat},{SEARCH_RADIUS_M}"
+        return lat, lon, area
 
     def _fetch_live(self, *, destination: str, names: list[str], **_: Any) -> dict[str, Any]:
         with httpx.Client(timeout=20.0) as client:
-            lat, lon = self._geocode(client, destination)
+            lat, lon, area = self._geocode(client, destination)
 
             confirmed: dict[str, str | None] = {}
             coords: dict[str, tuple[float, float]] = {}
@@ -156,7 +167,7 @@ class PlacesAdapter(Adapter):
                             "limit": CANDIDATES,
                             "lang": "en",
                             "apiKey": self.api_key,
-                            "filter": f"circle:{lon},{lat},{SEARCH_RADIUS_M}",
+                            "filter": area,
                             "bias": f"proximity:{lon},{lat}",
                         },
                     )

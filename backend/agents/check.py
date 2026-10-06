@@ -88,7 +88,10 @@ def find_problems(state: TravelState) -> list[str]:
             problems.append(f"Day {day.day} is empty. Give it at least one activity.")
             continue
 
-        visits = [a for a in (_scheduled(b.title, attractions) for b in day.blocks) if a]
+        # A place can appear in two blocks ("Nishiki Market", "Lunch at Nishiki
+        # Market"); it is still one visit.
+        matched = (_scheduled(b.title, attractions) for b in day.blocks)
+        visits = list({a.name: a for a in matched if a}.values())
 
         hours = sum(a.est_hours for a in visits)
         if hours > MAX_HOURS_PER_DAY:

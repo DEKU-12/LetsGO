@@ -103,6 +103,12 @@ def route_once(case: RoutingCase, llm: LLM) -> CaseResult:
     except Exception as exc:  # noqa: BLE001 - a crash is a result, not a stop
         return CaseResult(case, frozenset(), False, error=f"parse: {exc}")
 
+    if state.get("errors"):
+        # The guard turns a provider failure (bad key, rate limit) into a polite
+        # "please rephrase". That is right for a user and wrong for a metric: it
+        # would score an outage as a routing mistake.
+        return CaseResult(case, frozenset(), False, error=f"parse: {state['errors'][0]}")
+
     if state.get("clarification"):
         # Asking for clarification is the correct answer to an unplannable
         # request: no agents invoked.
