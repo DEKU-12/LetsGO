@@ -27,6 +27,12 @@ Rules:
 - "note" is one short practical line — what to buy on arrival, or what to skip."""
 
 
+def _change(state: TravelState) -> str:
+    """The traveller's change request, when this agent is rerun to edit a plan."""
+    request = state.get("edit_request")
+    return f"\n\nThe traveller asked for this change: {request}" if request else ""
+
+
 @register_mock("transport")
 def _mock_transport(context: dict[str, Any]) -> dict[str, Any]:
     candidates = context.get("local") or []
@@ -59,6 +65,7 @@ def transport(state: TravelState, llm: LLM) -> dict[str, Any]:
                 f"Trip length: {params.duration_days or 'unspecified'} days\n"
                 f"Travellers: {params.travelers}\n\n"
                 f"Local transport candidates:\n{listing}"
+                f"{_change(state)}"
             ),
             context={"local": local},
             max_tokens=1024,

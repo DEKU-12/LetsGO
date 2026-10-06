@@ -98,14 +98,15 @@ def itinerary(state: TravelState, llm: LLM) -> dict[str, Any]:
         f"- {a.name} ({a.category}, ~{a.est_hours:g}h): {a.description}" for a in attractions
     )
 
-    # A redo after the schedule check failed: show the draft and what to fix.
+    # A redo — after the schedule check failed, or because the traveller asked
+    # for a change: show the draft and what to change.
     redo = ""
     feedback = state.get("itinerary_feedback") or []
     previous = state.get("itinerary")
     if feedback and previous is not None:
         redo = (
             f"\n\nYour previous draft:\n{previous.model_dump_json()}\n\n"
-            "It failed these checks. Fix every one, change nothing else:\n"
+            "Revise it. Address every point below and change nothing else:\n"
             + "\n".join(f"- {p}" for p in feedback)
         )
 

@@ -67,6 +67,11 @@ class Trip(Base):
     duration_s: Mapped[float] = mapped_column(Float, default=0.0)
     sources: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     state: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: Set on a version made by editing another trip: the trip it was edited
+    #: from, and the message that asked for the change. Following parent_id
+    #: back is the undo history.
+    parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    edit_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     runs: Mapped[list[AgentRun]] = relationship(
         back_populates="trip", cascade="all, delete-orphan", order_by="AgentRun.position"
@@ -83,6 +88,8 @@ class Trip(Base):
             "duration_s": round(self.duration_s, 1),
             "agents": [r.agent for r in self.runs],
             "has_plan": bool(self.plan),
+            "parent_id": self.parent_id,
+            "edit_message": self.edit_message,
         }
 
     def detail(self) -> dict[str, Any]:
@@ -119,12 +126,14 @@ _engine = create_engine(
 
 def init_db() -> None:
     Base.metadata.create_all(_engine)
-    # create_all never alters an existing table, so a database made before the
-    # state column existed needs it added by hand.
+    # create_all never alters an existing table, so a database made before
+    # these columns existed needs them added by hand.
+    added = {"state": "JSON", "parent_id": "INTEGER", "edit_message": "TEXT"}
     columns = {c["name"] for c in inspect(_engine).get_columns("trips")}
-    if "state" not in columns:
-        with _engine.begin() as conn:
-            conn.execute(text("ALTER TABLE trips ADD COLUMN state JSON"))
+    with _engine.begin() as conn:
+        for name, kind in added.items():
+            if name not in columns:
+                conn.execute(text(f"ALTER TABLE trips ADD COLUMN {name} {kind}"))
 
 
 @contextmanager
@@ -141,7 +150,13 @@ def session_scope() -> Iterator[Session]:
 
 
 def save_trip(
-    state: TravelState, *, provider: str, model: str, duration_s: float
+    state: TravelState,
+    *,
+    provider: str,
+    model: str,
+    duration_s: float,
+    parent_id: int | None = None,
+    edit_message: str | None = None,
 ) -> int:
     """Persist one finished run. Returns the new trip id."""
     params = state.get("params")
@@ -158,6 +173,8 @@ def save_trip(
             duration_s=duration_s,
             sources=sorted(set(state.get("sources") or [])),
             state=_STATE.dump_python(state, mode="json"),
+            parent_id=parent_id,
+            edit_message=edit_message,
         )
 
         errors = state.get("errors") or []

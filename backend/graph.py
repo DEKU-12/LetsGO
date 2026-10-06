@@ -111,11 +111,20 @@ def stream_trip(
         for node, update in step.items():
             if not isinstance(update, dict):
                 continue
-            for key, value in update.items():
-                # `trace`, `errors` and `sources` accumulate; everything else
-                # replaces. Mirror the reducers declared on TravelState.
-                if key in {"trace", "errors", "sources"}:
-                    state[key] = [*(state.get(key) or []), *value]
-                else:
-                    state[key] = value
+            apply_update(state, update)
             yield node, update, state
+
+
+def apply_update(state: TravelState, update: dict[str, Any]) -> TravelState:
+    """Fold one node's update into state, the way the graph would.
+
+    `trace`, `errors` and `sources` accumulate; everything else replaces. This
+    mirrors the reducers declared on TravelState, for code that runs nodes
+    outside the graph (streaming, plan edits).
+    """
+    for key, value in update.items():
+        if key in {"trace", "errors", "sources"}:
+            state[key] = [*(state.get(key) or []), *value]
+        else:
+            state[key] = value
+    return state

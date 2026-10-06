@@ -14,7 +14,11 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-load_dotenv(PROJECT_ROOT / ".env")
+# override=True: the project's .env wins over the shell. A key exported in a
+# shell profile for some other project would otherwise silently shadow the one
+# in .env, and every run fails with an auth error that looks like a model
+# problem. Without a .env file (CI, deploys) the environment is used as is.
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 
 def _env(name: str) -> str | None:

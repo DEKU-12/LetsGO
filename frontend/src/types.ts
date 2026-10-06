@@ -16,7 +16,15 @@ export interface PlanResult {
   sources: string[];
   notes: string[];
   duration_s?: number;
+  /** Set on a version made by an edit: the trip it was edited from. */
+  parent_id?: number;
+  edited?: { section: string; days: number[] };
 }
+
+/** What POST /api/trips/{id}/edit returns. */
+export type EditResponse =
+  | (PlanResult & { type: "done" })
+  | { type: "reply"; reply: string; trip_id: number };
 
 export type ServerEvent =
   | { type: "started"; provider: string; model: string; mock: boolean }

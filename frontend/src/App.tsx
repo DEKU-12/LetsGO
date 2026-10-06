@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { marked } from "marked";
 import { usePlanner } from "./usePlanner";
-import type { Health } from "./types";
+import type { Health, PlanResult } from "./types";
+
+const EDIT_EXAMPLES = [
+  "Less walking on day 2",
+  "Nothing before 10am",
+  "A cheaper place to stay",
+];
 
 const EXAMPLES = [
   "5 days in Japan, mid-range budget, love food and history. I need hotels and flights too.",
@@ -21,7 +27,7 @@ export default function App() {
       .catch(() => setHealth(null));
   }, []);
 
-  const busy = planner.status === "planning";
+  const busy = planner.status === "planning" || planner.editing;
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -94,6 +100,18 @@ export default function App() {
         </div>
       )}
 
+      {planner.result?.plan && planner.result.trip_id !== null && (
+        <EditBox
+          tripId={planner.result.trip_id}
+          result={planner.result}
+          editing={planner.editing}
+          reply={planner.reply}
+          canUndo={planner.history.length > 0}
+          onEdit={planner.edit}
+          onUndo={planner.undo}
+        />
+      )}
+
       {planner.result?.plan && <Plan markdown={planner.result.plan} />}
 
       {planner.result && (
@@ -135,6 +153,85 @@ function Progress({
       </ol>
     </section>
   );
+}
+
+function EditBox({
+  tripId,
+  result,
+  editing,
+  reply,
+  canUndo,
+  onEdit,
+  onUndo,
+}: {
+  tripId: number;
+  result: PlanResult;
+  editing: boolean;
+  reply: string | null;
+  canUndo: boolean;
+  onEdit: (message: string, tripId: number) => void;
+  onUndo: () => void;
+}) {
+  const [message, setMessage] = useState("");
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const text = message.trim();
+    if (text && !editing) {
+      onEdit(text, tripId);
+      setMessage("");
+    }
+  }
+
+  return (
+    <form className="edit" onSubmit={submit}>
+      <div className="edit-row">
+        <input
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          placeholder="Change something… e.g. less walking on day 2"
+          disabled={editing}
+          aria-label="Change the plan"
+        />
+        <button type="submit" className="go" disabled={editing || !message.trim()}>
+          {editing ? "Updating…" : "Update"}
+        </button>
+      </div>
+      <div className="actions">
+        <div className="examples">
+          {EDIT_EXAMPLES.map((example) => (
+            <button
+              key={example}
+              type="button"
+              className="chip"
+              disabled={editing}
+              onClick={() => setMessage(example)}
+            >
+              {example}
+            </button>
+          ))}
+        </div>
+        {canUndo && (
+          <button type="button" className="chip" disabled={editing} onClick={onUndo}>
+            Undo last change
+          </button>
+        )}
+      </div>
+      {result.edited && !reply && <p className="edit-note">{describeEdit(result.edited)}</p>}
+      {reply && <p className="edit-note">{reply}</p>}
+    </form>
+  );
+}
+
+function describeEdit(edited: { section: string; days: number[] }): string {
+  const section =
+    { itinerary: "the schedule", accommodation: "where to stay", transport: "transport" }[
+      edited.section
+    ] ?? edited.section;
+  const days = edited.days.length
+    ? ` (day${edited.days.length > 1 ? "s" : ""} ${edited.days.join(", ")})`
+    : "";
+  return `Updated ${section}${days}. Everything else is unchanged.`;
 }
 
 function Plan({ markdown }: { markdown: string }) {

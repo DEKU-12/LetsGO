@@ -24,7 +24,8 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from backend.config import PROJECT_ROOT
-from backend.db import get_trip, init_db, list_trips, save_trip
+from backend.db import get_trip, init_db, list_trips, load_state, save_trip
+from backend.edit import edit_trip
 from backend.graph import WORKER_NODES, plan_trip, stream_trip
 from backend.llm import LLM, LLMError
 from backend.state import AGGREGATOR
@@ -48,6 +49,11 @@ MAX_REQUEST_CHARS = 2000
 
 class PlanRequest(BaseModel):
     request: str = Field(min_length=1, max_length=MAX_REQUEST_CHARS)
+    provider: str | None = None
+
+
+class EditRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=MAX_REQUEST_CHARS)
     provider: str | None = None
 
 
@@ -129,6 +135,45 @@ def trip(trip_id: int) -> dict[str, Any]:
     if found is None:
         raise HTTPException(status_code=404, detail="no such trip")
     return found
+
+
+@app.post("/api/trips/{trip_id}/edit")
+async def edit_plan(trip_id: int, body: EditRequest) -> dict[str, Any]:
+    """Change a saved plan — "less walking on day 3".
+
+    Saves the result as a new trip whose ``parent_id`` is this one, so the old
+    version stays put and undo is just going back to it. A message that is not
+    an edit this plan can take returns ``type: "reply"`` and saves nothing.
+    """
+    state = await run_in_threadpool(load_state, trip_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="no such trip")
+    if not state.get("final_plan"):
+        raise HTTPException(status_code=400, detail="this trip has no plan to edit")
+    try:
+        llm = LLM(provider=body.provider)
+    except LLMError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    started = time.monotonic()
+    edited, reply = await run_in_threadpool(edit_trip, state, body.message, llm)
+    elapsed = time.monotonic() - started
+
+    if edited is None:
+        return {"type": "reply", "reply": reply, "trip_id": trip_id}
+
+    new_id = await run_in_threadpool(
+        save_trip, edited, provider=llm.provider, model=llm.model, duration_s=elapsed,
+        parent_id=trip_id, edit_message=body.message,
+    )
+    edit = (edited.get("meta") or {}).get("edit", {})
+    return {
+        **_result(edited, new_id),
+        "type": "done",
+        "parent_id": trip_id,
+        "edited": {"section": edit.get("agent"), "days": edit.get("days", [])},
+        "duration_s": round(elapsed, 1),
+    }
 
 
 @app.websocket("/ws/plan")

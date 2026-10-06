@@ -139,7 +139,9 @@ which is what the trajectory checks in `eval/` score.
 | `eval/run.py` | The report |
 | `eval/places_benchmark.py` | Error rate of the place verifier itself |
 | `eval/grade.py` | Grade plans by hand, to validate the judge |
-| `backend/api.py` | FastAPI app: `/api/plan`, `/api/trips`, `/ws/plan` |
+| `eval/edits.py` | Plan edits: right section and days, change made, other days untouched |
+| `backend/edit.py` | Change a finished plan by chatting: reruns one agent, keeps unmentioned days as they were |
+| `backend/api.py` | FastAPI app: `/api/plan`, `/api/trips`, `/api/trips/{id}/edit`, `/ws/plan` |
 | `backend/db.py` | Trips and per-agent run records |
 | `frontend/` | React (Vite) chat UI |
 

@@ -181,6 +181,35 @@ textarea:disabled { opacity: 0.6; }
 
 /* --- output --------------------------------------------------------- */
 
+.edit { margin-top: 1.5rem; }
+
+.edit-row {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.edit input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
+.edit input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.edit input:disabled { opacity: 0.6; }
+
+.edit-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 .clarify {
   margin-top: 1.5rem;
   padding: 1rem 1.25rem;

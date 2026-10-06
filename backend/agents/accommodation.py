@@ -31,6 +31,12 @@ Rules:
 - "note" is one short line of practical advice about staying in this place."""
 
 
+def _change(state: TravelState) -> str:
+    """The traveller's change request, when this agent is rerun to edit a plan."""
+    request = state.get("edit_request")
+    return f"\n\nThe traveller asked for this change: {request}" if request else ""
+
+
 @register_mock("accommodation")
 def _mock_accommodation(context: dict[str, Any]) -> dict[str, Any]:
     """Cheapest-three selection standing in for the model when no key is set."""
@@ -76,6 +82,7 @@ def accommodation(state: TravelState, llm: LLM) -> dict[str, Any]:
                 f"Nights: {nights}   Travellers: {params.travelers}\n"
                 f"Interests: {', '.join(params.preferences) or 'none stated'}\n\n"
                 f"Candidates:\n{listing}"
+                f"{_change(state)}"
             ),
             context={"candidates": candidates, "target": target},
             max_tokens=1536,

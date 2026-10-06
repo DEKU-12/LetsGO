@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { PlanResult, RouteStep, ServerEvent } from "./types";
+import type { EditResponse, PlanResult, RouteStep, ServerEvent } from "./types";
 
 /** One entry in the live progress list. */
 export interface Step {
@@ -17,6 +17,12 @@ export interface PlannerState {
   steps: Step[];
   result: PlanResult | null;
   error: string | null;
+  /** An edit request is in flight. */
+  editing: boolean;
+  /** The server's answer when a message could not be applied as an edit. */
+  reply: string | null;
+  /** Earlier versions of the plan, most recent last. Undo pops from here. */
+  history: PlanResult[];
 }
 
 const INITIAL: PlannerState = {
@@ -27,6 +33,9 @@ const INITIAL: PlannerState = {
   steps: [],
   result: null,
   error: null,
+  editing: false,
+  reply: null,
+  history: [],
 };
 
 /**
@@ -97,12 +106,50 @@ export function usePlanner() {
       );
   }, []);
 
+  /** Change the current plan; the server saves the result as a new version. */
+  const edit = useCallback(async (message: string, tripId: number) => {
+    setState((s) => ({ ...s, editing: true, reply: null, error: null }));
+    try {
+      const response = await fetch(`/api/trips/${tripId}/edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail ?? `edit failed (${response.status})`);
+      }
+      const body: EditResponse = await response.json();
+      setState((s) =>
+        body.type === "reply"
+          ? { ...s, editing: false, reply: body.reply }
+          : {
+              ...s,
+              editing: false,
+              history: s.result ? [...s.history, s.result] : s.history,
+              result: body,
+            },
+      );
+    } catch (err) {
+      setState((s) => ({ ...s, editing: false, error: (err as Error).message }));
+    }
+  }, []);
+
+  /** Go back to the previous version. It is still saved; nothing is deleted. */
+  const undo = useCallback(() => {
+    setState((s) =>
+      s.history.length
+        ? { ...s, result: s.history[s.history.length - 1], history: s.history.slice(0, -1), reply: null }
+        : s,
+    );
+  }, []);
+
   const reset = useCallback(() => {
     socket.current?.close();
     setState(INITIAL);
   }, []);
 
-  return { ...state, plan, reset };
+  return { ...state, plan, edit, undo, reset };
 }
 
 /** Add the agents the supervisor chose, keeping anything already finished. */
@@ -125,7 +172,9 @@ function markDone(
       ? { ...s, status: "done" as const, notes: message.notes }
       : s,
   );
-  return known
-    ? updated
-    : [...updated, { ...message, status: "done" as const }];
+  if (known) return updated;
+  // A step the supervisor did not plan (the schedule check) goes right after
+  // the last finished step, which is where it actually ran.
+  const at = updated.map((s) => s.status).lastIndexOf("done") + 1;
+  return [...updated.slice(0, at), { ...message, status: "done" as const }, ...updated.slice(at)];
 }

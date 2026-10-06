@@ -125,6 +125,11 @@ class TravelState(TypedDict, total=False):
     itinerary_feedback: list[str]
     check_attempts: int
 
+    # plan edits (see edit.py)
+    #: A change the traveller asked for, read by the accommodation and
+    #: transport agents when they are rerun on a finished plan.
+    edit_request: str | None
+
     # aggregation
     final_plan: str | None
 
@@ -150,6 +155,7 @@ def new_state(request: str) -> TravelState:
         transport=None,
         itinerary_feedback=[],
         check_attempts=0,
+        edit_request=None,
         final_plan=None,
         sources=[],
         trace=[],
