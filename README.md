@@ -15,7 +15,11 @@ map, a real photo of it, and a schedule that respects opening hours.**
 
 ### 🎬 The 25-second trailer
 
-[![Watch the LetsGO trailer](docs/letsgo-trailer.jpg)](https://github.com/DEKU-12/LetsGO/raw/main/docs/letsgo-trailer.mp4)
+
+
+https://github.com/user-attachments/assets/de12077f-7a87-4964-bdec-462ec6d5923d
+
+
 
 *Recorded from the real app on Claude Opus: real typing, real agents, real
 result. Click to play.*
