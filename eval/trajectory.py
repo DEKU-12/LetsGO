@@ -13,15 +13,21 @@ Four checks:
 * **repaired_plan** — the supervisor's route needed fixing before it could run.
 * **agent_errors** — anything an agent recorded about its own run.
 
-Also counted, not failed: **schedule_retries**, how many times the schedule
-check sent the itinerary back. A redo is the check doing its job, but a high
-rate means the itinerary prompt is weak.
+Also counted, not failed:
+
+* **schedule_retries** — how many times the schedule check sent the itinerary
+  back. A redo is the check doing its job; a high rate means a weak prompt.
+* **unresearched_stops** — schedule entries that are neither a researched
+  place nor a meal, rest or travel. The itinerary agent is *told* to use only
+  researched places; this measures whether it does. Word-based, so it is a
+  list to read, not a verdict.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from backend.agents.check import match_attraction
 from backend.agents.supervisor import CANONICAL_ORDER, DEPENDENCIES
 from backend.state import ACCOMMODATION, ITINERARY, RESEARCH, TRANSPORT, TravelState
 
@@ -34,6 +40,17 @@ _CONTRIBUTION: dict[str, tuple[str, str]] = {
 }
 
 
+#: Words that mark a schedule entry as a meal, a rest or getting somewhere —
+#: things the itinerary may add without them being researched places.
+_NOT_A_STOP = (
+    "breakfast", "brunch", "lunch", "dinner", "coffee", "café", "cafe", "snack",
+    "meal", "eat", "rest", "hotel", "check-in", "check in", "check-out", "relax",
+    "free time", "travel", "train", "drive", "flight", "transfer", "depart",
+    "arrive", "return", "bus", "ferry", "taxi", "walk to", "head to",
+    "shinkansen", "tram", "metro", "subway",
+)
+
+
 @dataclass
 class TrajectoryReport:
     trace: list[str]
@@ -42,6 +59,7 @@ class TrajectoryReport:
     repaired_plan: list[str] = field(default_factory=list)
     agent_errors: list[str] = field(default_factory=list)
     schedule_retries: int = 0
+    unresearched_stops: list[str] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -86,6 +104,15 @@ def check_trajectory(state: TravelState) -> TrajectoryReport:
     # How often the schedule check sent the itinerary back.
     checks = (state.get("meta") or {}).get("itinerary_checks") or []
     report.schedule_retries = sum(1 for problems in checks if problems)
+
+    # Schedule entries that are not a researched place, a meal, rest or travel.
+    research, itinerary = state.get("research"), state.get("itinerary")
+    if research and itinerary:
+        report.unresearched_stops = [
+            b.title for d in itinerary.days for b in d.blocks
+            if not match_attraction(b.title, research.attractions)
+            and not any(w in b.title.lower() for w in _NOT_A_STOP)
+        ]
 
     # 4. Anything the agents flagged about themselves.
     report.agent_errors = list(state.get("errors") or [])

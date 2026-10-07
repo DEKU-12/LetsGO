@@ -139,7 +139,11 @@ def supervisor(
 ) -> dict[str, Any]:
     """Graph node: plan the route on the first visit, then advance through it."""
     if state.get("route_plan"):
-        return {"cursor": state.get("cursor", 0) + 1}
+        # Move to the first planned agent that has not run yet. Counting what
+        # ran, rather than adding one, stays right when two ran in parallel.
+        done = set(state.get("trace") or [])
+        plan = state["route_plan"]
+        return {"cursor": next((i for i, a in enumerate(plan) if a not in done), len(plan))}
 
     params = state.get("params")
     request = state["request"]
@@ -147,6 +151,7 @@ def supervisor(
     try:
         decision = llm.json(
             task="route_plan",
+            effort="low",
             system=ROUTE_SYSTEM,
             prompt=(
                 f"Request: {request}\n"

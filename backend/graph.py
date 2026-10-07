@@ -40,13 +40,20 @@ def _after_guard(state: TravelState) -> str:
     return END if state.get("clarification") else "supervisor"
 
 
-def _route_next(state: TravelState) -> str:
-    """Dispatch to the next agent in the supervisor's plan."""
+#: Agents that read the same inputs and not each other's output, so they can
+#: run at the same time (stay and transport advice: ~10-15 s each).
+PARALLEL = {ACCOMMODATION, TRANSPORT}
+
+
+def _route_next(state: TravelState) -> str | list[str]:
+    """Dispatch to the next agent in the supervisor's plan — or the next two,
+    together, when both are in PARALLEL."""
     plan = state.get("route_plan") or []
     cursor = state.get("cursor", 0)
     if cursor >= len(plan):
         return END
-    return plan[cursor]
+    pair = plan[cursor:cursor + 2]
+    return pair if len(pair) == 2 and set(pair) <= PARALLEL else plan[cursor]
 
 
 def build_graph(llm: LLM | None = None):

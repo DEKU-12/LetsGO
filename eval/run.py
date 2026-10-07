@@ -3,6 +3,7 @@
     uv run python -m eval.run                 # routing + a few judged plans
     uv run python -m eval.run --provider mock # free, no API key, structural only
     uv run python -m eval.run --plans 0       # routing metrics only, cheapest real run
+    uv run python -m eval.run --plans 0 --repeat 3   # routing pass^3: right on every try
 
 Results are written to `eval_results/<timestamp>.json` so runs can be compared.
 """
@@ -48,6 +49,8 @@ def main() -> int:
     parser.add_argument("--plans", type=int, default=len(PLAN_CASE_IDS),
                         help="how many plans to generate and judge (0 = skip)")
     parser.add_argument("--no-save", action="store_true", help="do not write eval_results/")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="route every request N times and report pass^N (right on all N)")
     args = parser.parse_args()
 
     llm = LLM(provider=args.provider)
@@ -82,6 +85,20 @@ def main() -> int:
               "routing decision, so the numbers above are not a measurement.")
         print(f"   first failure: {failed[0].error[:200]}")
 
+    # pass^k: the model is not deterministic, so one correct run per request is
+    # pass@1. A request counts toward pass^k only if every one of k runs routed
+    # it exactly right — the number that says whether it can be relied on.
+    passk = None
+    if args.repeat > 1:
+        runs = [selection, *(evaluate_selection(llm) for _ in range(args.repeat - 1))]
+        always = [all(run.results[i].exact for run in runs) for i in range(len(selection.results))]
+        passk = sum(always) / len(always)
+        print(f"   {f'pass^{args.repeat}':<22}{_pct(passk):>22}"
+              f"   {sum(always)}/{len(always)} routed exactly right on all {args.repeat} runs")
+        flaky = [r.case.id for r, ok in zip(selection.results, always) if not ok]
+        if flaky:
+            print(f"   not right on every run: {', '.join(flaky)}")
+
     wrong = [r for r in selection.results if not r.exact and not r.error]
     if wrong:
         print("\n   misroutes:")
@@ -99,8 +116,15 @@ def main() -> int:
         chosen = [c for c in ROUTING_CASES if c.id in PLAN_CASE_IDS][: args.plans]
         print(f"\n\n2. PLAN QUALITY   ({len(chosen)} plans, judged 1-5 per dimension)\n")
 
+        spent: list[dict[str, list[int]]] = []
+        seconds: list[float] = []
         for case in chosen:
+            before = {k: list(v) for k, v in llm.usage.items()}
+            clock = datetime.now(timezone.utc)
             state = plan_trip(case.request, llm)
+            seconds.append((datetime.now(timezone.utc) - clock).total_seconds())
+            spent.append({k: [a - b for a, b in zip(v, before.get(k, [0, 0, 0]))]
+                          for k, v in llm.usage.items()})
             plan = state.get("final_plan") or ""
             result = judge_plan(case.id, case.request, plan, llm)
             judged.append(result)
@@ -132,6 +156,25 @@ def main() -> int:
                     avg = sum(values) / len(values)
                     print(f"   {'  ' + dimension:<26} {avg:>4.1f}/5   {_bar(avg / 5)}")
 
+        if spent:
+            # Cost and size per plan (generation only, not judging), and where
+            # the tokens go — the per-agent split is what to optimise first.
+            per_plan = [sum(i + o for _, i, o in s.values()) for s in spent]
+            by_task: dict[str, list[int]] = {}
+            for s in spent:
+                for task, (c, i, o) in s.items():
+                    row = by_task.setdefault(task, [0, 0, 0])
+                    row[0] += c; row[1] += i; row[2] += o  # noqa: E702
+            costs = [llm.cost(s) for s in spent]
+            print(f"\n   {'seconds per plan':<26} {sum(seconds) / len(seconds):.0f} average, "
+                  f"{max(seconds):.0f} slowest")
+            print(f"   {'tokens per plan':<26} {sum(per_plan) // len(per_plan):,} average"
+                  + (f", ${sum(costs) / len(costs):.3f} average" if None not in costs else ""))
+            for task, (c, i, o) in sorted(by_task.items(), key=lambda kv: -(kv[1][1] + kv[1][2])):
+                if not c:
+                    continue  # tasks seen in this run but not while generating plans
+                print(f"     {task:<24} {c:>3} calls  {i + o:>8,} tokens")
+
         if grounding:
             total = sum(n for _, _, n, _ in grounding)
             confirmed = sum(c for _, c, _, _ in grounding)
@@ -154,6 +197,9 @@ def main() -> int:
                     s for s in report.trace if not s.startswith('guard:'))}")
             else:
                 print(f"   {case_id:<26} {'; '.join(report.issues)}")
+            if report.unresearched_stops:
+                print(f"   {'':<26} not a researched place: "
+                      f"{', '.join(report.unresearched_stops[:4])}")
 
     # -- 4. judge validation ------------------------------------------------
     print("\n\n4. JUDGE VALIDATION   (does the judge agree with a human?)\n")
@@ -177,7 +223,9 @@ def main() -> int:
             print(f"\n   CAUTION — {validation.note}")
 
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
-    print(f"\n{BAR}\n  {elapsed:.0f}s on {llm.provider}\n{BAR}")
+    total = llm.cost()
+    print(f"\n{BAR}\n  {elapsed:.0f}s on {llm.provider}"
+          + (f", ${total:.2f} for this whole run" if total is not None else "") + f"\n{BAR}")
 
     # -- persist ------------------------------------------------------------
     if not args.no_save:
@@ -189,6 +237,8 @@ def main() -> int:
             "model": llm.model,
             "selection": {
                 "exact_match": selection.exact_match,
+                "repeat": args.repeat,
+                "pass_k": passk,
                 "repaired": selection.repaired,
                 "micro": {"precision": micro.precision, "recall": micro.recall, "f1": micro.f1},
                 "per_agent": {

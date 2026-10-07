@@ -49,11 +49,8 @@ class Settings:
         default_factory=lambda: _env("DATABASE_URL") or "sqlite:///./letsgo.db"
     )
 
-    langsmith_api_key: str | None = field(default_factory=lambda: _env("LANGSMITH_API_KEY"))
-    langsmith_tracing: bool = field(
-        default_factory=lambda: (_env("LANGSMITH_TRACING") or "").lower() == "true"
-    )
-    langsmith_project: str = field(default_factory=lambda: _env("LANGSMITH_PROJECT") or "letsgo")
+    # LangSmith reads LANGSMITH_TRACING / _API_KEY / _PROJECT from the
+    # environment itself; nothing here needs a copy.
 
     def resolved_provider(self) -> str:
         """Pick a concrete LLM backend.

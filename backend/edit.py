@@ -101,6 +101,7 @@ def route_edit(
     try:
         raw = llm.json(
             task="edit_route",
+            effort="low",
             system=EDIT_SYSTEM,
             prompt=(
                 f"Trip: {params.destination}, {days_planned or 'no'} days planned\n"

@@ -5,8 +5,10 @@ The one agent that uses tool calling: the model decides what to look up.
 * ``get_weather(city)`` — the model picks the cities. A trip "covering Tokyo
   and Kyoto" gets weather for both, where a fixed call could only ask about
   "Japan".
-* ``check_place(name, city)`` — the model can confirm a place it is unsure of
-  before recommending it, and pick another if it cannot be found.
+
+(It also had a ``check_place`` tool once. The code verifies every recommended
+place afterwards anyway, so the model checking first was duplicate work — and
+each check added a round of model thinking, up to ~30 s on a plan.)
 
 What the model decides is flexible; what must always happen is not left to it.
 If it never checks the weather, the destination's weather is fetched anyway,
@@ -42,9 +44,8 @@ You have tools:
 - get_weather(city): the weather outlook for one city. Call it for each main
   city the trip covers (at most 3). For a country, pick the city they will
   spend most time in.
-- check_place(name, city): whether a place can be found on a map. Use it on
-  places you are not sure of (at most 4 calls). If one comes back
-  "exists": false, leave it out and choose another.
+Make all the calls you need together in your first reply, not one at a time:
+each extra round makes the traveller wait.
 
 Return JSON:
   {"attractions": [{"name": str, "category": str, "description": str, "est_hours": number}],
@@ -225,24 +226,11 @@ def destination_research(state: TravelState, llm: LLM) -> dict[str, Any]:
         city_weather[city] = WeatherOutlook(**result.data)
         return result.data
 
-    def check_place(name: str, city: str) -> dict[str, Any]:
-        result = PlacesAdapter().fetch(destination=city, names=[name])
-        if result.is_mock:
-            return {"exists": None, "note": "no map data available; use your judgement"}
-        sources.add(f"{result.provider}:{result.source}")
-        matched = result.data["confirmed"].get(name)
-        return {"exists": matched is not None, "matched_name": matched}
-
     tools = [
         Tool("get_weather", "Weather outlook for one city over the next few days.",
              {"type": "object", "properties": {"city": {"type": "string"}},
               "required": ["city"]},
              get_weather),
-        Tool("check_place", "Whether a named place can be found on a map near a city.",
-             {"type": "object",
-              "properties": {"name": {"type": "string"}, "city": {"type": "string"}},
-              "required": ["name", "city"]},
-             check_place),
     ]
 
     calls: list[dict[str, Any]] = []

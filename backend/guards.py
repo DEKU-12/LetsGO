@@ -104,6 +104,7 @@ def parse_request(state: TravelState, llm: LLM) -> dict[str, Any]:
     try:
         raw = llm.json(
             task="parse_request",
+            effort="low",
             system=PARSE_SYSTEM,
             prompt=f"Traveller request:\n{request}",
             context={"request": request},

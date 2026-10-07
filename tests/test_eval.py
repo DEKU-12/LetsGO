@@ -117,3 +117,24 @@ def test_validation_measures_error_against_human_scores(llm: LLM) -> None:
     assert report.usable
     assert report.mae >= 0.0
     assert 0.0 <= report.within_one <= 1.0
+
+
+def test_schedule_entries_that_are_not_researched_places_are_listed() -> None:
+    from backend.state import (
+        ActivityBlock,
+        Attraction,
+        ItineraryDay,
+        ItineraryOutput,
+        ResearchOutput,
+    )
+    from eval.trajectory import check_trajectory
+
+    state = {
+        "research": ResearchOutput(destination="Paris", attractions=[Attraction(name="Louvre")]),
+        "itinerary": ItineraryOutput(days=[ItineraryDay(day=1, blocks=[
+            ActivityBlock(time="09:00", title="Louvre"),
+            ActivityBlock(time="13:00", title="Lunch nearby"),
+            ActivityBlock(time="15:00", title="Musée d'Orsay"),  # never researched
+        ])]),
+    }
+    assert check_trajectory(state).unresearched_stops == ["Musée d'Orsay"]

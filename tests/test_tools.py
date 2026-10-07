@@ -37,7 +37,8 @@ class _ScriptedGroq:
                 SimpleNamespace(id=f"c{i}", function=SimpleNamespace(name=n, arguments=a))
                 for i, (n, a) in enumerate(turn)
             ])
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+        usage = SimpleNamespace(prompt_tokens=100, completion_tokens=10)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
 
 
 def _groq_llm(monkeypatch, turns) -> tuple[LLM, _ScriptedGroq]:
@@ -125,3 +126,13 @@ def test_weather_is_fetched_even_if_the_model_never_asks(state, monkeypatch) -> 
     assert update["research"].weather is not None
     calls = update["meta"]["tool_calls"]["destination_research"]
     assert calls == [{"name": "get_weather", "args": {"city": "Lisbon"}, "ok": True, "fallback": True}]
+
+
+def test_tokens_are_counted_per_task(monkeypatch) -> None:
+    llm, _ = _groq_llm(monkeypatch, [[("get_weather", '{"city": "Rome"}')], '{"done": true}'])
+
+    llm.run_tools(task="research", system="s", prompt="p", tools=[_weather_tool([])])
+
+    # Two rounds to the model, each 100 in / 10 out in the fake.
+    assert llm.usage == {"research": [1, 200, 20]}
+    assert llm.cost() is None  # Groq free tier: no price, tokens only

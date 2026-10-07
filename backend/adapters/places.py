@@ -195,15 +195,13 @@ class PlacesAdapter(Adapter):
         with httpx.Client(timeout=20.0) as client:
             lat, lon, area, destination_id = self._geocode(client, destination)
 
-            confirmed: dict[str, str | None] = {}
-            coords: dict[str, tuple[float, float]] = {}
-            place_ids: dict[str, str] = {}
-            for name in names:
-                variants = name_variants(name)
-                confirmed[name] = None
+            def match(name: str) -> dict[str, Any] | None:
+                """The first map result, across a name's variants, that matches it.
 
-                # Search each form. A place written in English may only be
-                # findable under its local name, and vice versa.
+                Search each form: a place written in English may only be findable
+                under its local name, and vice versa.
+                """
+                variants = name_variants(name)
                 for query in variants:
                     response = client.get(
                         "https://api.geoapify.com/v1/geocode/search",
@@ -217,21 +215,25 @@ class PlacesAdapter(Adapter):
                         },
                     )
                     response.raise_for_status()
-
                     for feature in response.json().get("features") or []:
                         properties = feature["properties"]
                         candidate = (
                             properties.get("name") or properties.get("address_line1") or ""
                         )
                         if candidate and any(names_match(v, candidate) for v in variants):
-                            confirmed[name] = candidate
-                            if "lat" in properties and "lon" in properties:
-                                coords[name] = (properties["lat"], properties["lon"])
-                            if properties.get("place_id"):
-                                place_ids[name] = properties["place_id"]
-                            break
-                    if confirmed[name]:
-                        break
+                            return {**properties, "_matched": candidate}
+                return None
+
+            # One search (or a few) per name: run them together, not in turn.
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                found = dict(zip(names, pool.map(match, names)))
+
+            confirmed: dict[str, str | None] = {
+                n: (f or {}).get("_matched") for n, f in found.items()
+            }
+            coords = {n: (f["lat"], f["lon"]) for n, f in found.items()
+                      if f and "lat" in f and "lon" in f}
+            place_ids = {n: f["place_id"] for n, f in found.items() if f and f.get("place_id")}
 
         result: dict[str, Any] = {
             "confirmed": confirmed, "coords": coords, "centre": {"lat": lat, "lon": lon},

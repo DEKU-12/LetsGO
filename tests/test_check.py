@@ -71,19 +71,38 @@ def test_missing_and_empty_days_are_flagged() -> None:
     assert any("Day 2 is empty" in p for p in problems)
 
 
-def test_failed_check_sends_the_itinerary_back_until_retries_run_out() -> None:
-    places = [_place("Pantheon", 1)]
+def test_failed_check_sends_the_itinerary_back_while_it_changes() -> None:
+    places = [_place("Pantheon", 1), _place("Colosseum", 1), _place("Forum", 1)]
     state: dict[str, Any] = _state([["Pantheon"], ["Pantheon"]], places)
 
-    for _ in range(MAX_RETRIES):
-        state.update(check_itinerary(state))
-        assert after_check(state) == "itinerary"
+    state.update(check_itinerary(state))
+    assert after_check(state) == "itinerary"
 
-    update = check_itinerary(state)
+    # A redo with a different problem is progress: try again.
+    state["itinerary"] = _state([["Colosseum"], ["Colosseum"]], places)["itinerary"]
+    state.update(check_itinerary(state))
+    assert after_check(state) == "itinerary"
+
+
+def test_the_same_problems_twice_stops_retrying() -> None:
+    state: dict[str, Any] = _state([["Pantheon"], ["Pantheon"]], [_place("Pantheon", 1)])
+
+    state.update(check_itinerary(state))
+    update = check_itinerary(state)  # the redo changed nothing
     state.update(update)
+
     assert after_check(state) == "supervisor"
     assert any("unresolved" in e for e in update["errors"])
-    assert len(state["meta"]["itinerary_checks"]) == MAX_RETRIES + 1
+
+
+def test_similar_names_are_not_the_same_place() -> None:
+    from backend.agents.check import match_attraction
+
+    kinkaku = _place("Kinkaku-ji")
+    edo = _place("Edo-Tokyo Museum")
+    assert match_attraction("Ginkaku-ji (Silver Pavilion)", [kinkaku]) is None
+    assert match_attraction("Tokyo National Museum", [edo]) is None
+    assert match_attraction("Visit Kinkaku-ji early", [kinkaku]) is kinkaku
 
 
 def test_a_full_run_passes_through_the_check() -> None:

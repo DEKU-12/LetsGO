@@ -26,7 +26,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
-from backend.adapters.places import distance_km, name_variants, names_match
+from backend.adapters.places import distance_km, name_variants
 from backend.agents.itinerary import DEFAULT_DAYS
 from backend.hours import DAY_NAMES, clock, open_at, parse
 from backend.state import Attraction, TravelState
@@ -45,13 +45,16 @@ MAX_KM_PER_DAY = 60.0
 
 
 def match_attraction(title: str, attractions: list[Attraction]) -> Attraction | None:
-    """Which researched attraction, if any, an itinerary block is a visit to."""
+    """Which researched attraction, if any, an itinerary block is a visit to.
+
+    The block must contain the place's name (or a known variant). No fuzzy
+    matching: it called Ginkaku-ji a repeat of Kinkaku-ji and the Tokyo National
+    Museum a repeat of the Edo-Tokyo Museum, and the model, told to fix a repeat
+    that was not there, burned every retry trying.
+    """
     lowered = title.lower()
     for attraction in attractions:
-        variants = name_variants(attraction.name)
-        if any(v.lower() in lowered for v in variants):
-            return attraction
-        if any(names_match(v, title) for v in variants):
+        if any(v.lower() in lowered for v in name_variants(attraction.name)):
             return attraction
     return None
 
@@ -148,6 +151,10 @@ def check_itinerary(state: TravelState) -> dict[str, Any]:
     """Graph node: check the schedule, and either send it back or let it through."""
     problems = find_problems(state)
     attempts = state.get("check_attempts", 0) + 1
+    # The redo came back with exactly the same problems: the model cannot fix
+    # them (or the check is wrong about them), so more rounds only add latency.
+    if problems and problems == state.get("itinerary_feedback"):
+        attempts = max(attempts, MAX_RETRIES + 1)
 
     meta = dict(state.get("meta") or {})
     meta["itinerary_checks"] = [*meta.get("itinerary_checks", []), problems]
@@ -159,9 +166,7 @@ def check_itinerary(state: TravelState) -> dict[str, Any]:
         "trace": ["check_itinerary"],
     }
     if problems and attempts > MAX_RETRIES:
-        update["errors"] = [
-            f"check_itinerary: unresolved after {MAX_RETRIES} retries: {p}" for p in problems
-        ]
+        update["errors"] = [f"check_itinerary: unresolved: {p}" for p in problems]
     return update
 
 

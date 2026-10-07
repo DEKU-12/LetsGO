@@ -76,6 +76,7 @@ def suggest_preferences(request: str, llm: LLM, known: list[str]) -> list[str]:
     """
     raw = llm.json(
         task="extract_preferences",
+        effort="low",
         system=EXTRACT_SYSTEM,
         prompt=f"Request: {request}",
         context={"request": request},

@@ -51,7 +51,13 @@ def test_provider_failure_becomes_an_llm_error(monkeypatch: pytest.MonkeyPatch) 
     """A dead key must surface as LLMError so nodes degrade instead of crashing."""
     llm = LLM(provider="mock")
     llm.is_mock = False
-    llm._backend = lambda *_: (_ for _ in ()).throw(RuntimeError("401 Invalid API Key"))
+    class DeadKey:
+        tokens = [0, 0]  # every backend counts tokens
+
+        def __call__(self, *_):
+            raise RuntimeError("401 Invalid API Key")
+
+    llm._backend = DeadKey()
 
     with pytest.raises(LLMError, match="401 Invalid API Key"):
         llm.text(task="anything", system="", prompt="")

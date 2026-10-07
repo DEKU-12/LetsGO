@@ -21,8 +21,11 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
+
+from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 
 from backend.config import settings
 
@@ -66,6 +69,10 @@ MAX_TOOL_ROUNDS = 6
 #: Sent when the tool rounds run out.
 FINAL_ROUND = "You have used all your lookups. Answer now, using what you have found."
 
+#: USD per million (input, output) tokens, for models with a known price. Groq
+#: is used on its free tier, so its runs report tokens only.
+PRICES: dict[str, tuple[float, float]] = {"claude-opus-5-5": (4.0, 20.0)}
+
 #: Executes one tool call: (name, raw arguments) -> JSON string result.
 Execute = Callable[[str, Any], str]
 
@@ -107,6 +114,7 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 @dataclass
 class _Anthropic:
     model: str
+    tokens: list[int] = field(default_factory=lambda: [0, 0])
 
     def __post_init__(self) -> None:
         import anthropic  # imported lazily so the mock path needs no SDK
@@ -124,7 +132,9 @@ class _Anthropic:
             max_retries=MAX_RETRIES,
         )
 
-    def __call__(self, system: str, prompt: str, max_tokens: int) -> str:
+    def __call__(
+        self, system: str, prompt: str, max_tokens: int, effort: str | None = None
+    ) -> str:
         response = self._client.beta.messages.create(
             model=self.model,
             max_tokens=max(max_tokens, ANTHROPIC_MIN_TOKENS),
@@ -132,7 +142,10 @@ class _Anthropic:
             messages=[{"role": "user", "content": prompt}],
             betas=[FALLBACK_BETA],
             fallbacks="default",
+            **({"output_config": {"effort": effort}} if effort else {}),
         )
+        self.tokens[0] += response.usage.input_tokens
+        self.tokens[1] += response.usage.output_tokens
         return "".join(b.text for b in response.content if b.type == "text")
 
     def run_tools(
@@ -156,6 +169,8 @@ class _Anthropic:
                 betas=[FALLBACK_BETA],
                 fallbacks="default",
             )
+            self.tokens[0] += response.usage.input_tokens
+            self.tokens[1] += response.usage.output_tokens
             calls = [b for b in response.content if b.type == "tool_use"]
             if not calls:
                 return "".join(b.text for b in response.content if b.type == "text")
@@ -170,13 +185,16 @@ class _Anthropic:
 @dataclass
 class _Groq:
     model: str
+    tokens: list[int] = field(default_factory=lambda: [0, 0])
 
     def __post_init__(self) -> None:
         from groq import Groq
 
         self._client = Groq(api_key=settings.groq_api_key, max_retries=MAX_RETRIES)
 
-    def __call__(self, system: str, prompt: str, max_tokens: int) -> str:
+    def __call__(
+        self, system: str, prompt: str, max_tokens: int, effort: str | None = None
+    ) -> str:
         response = self._client.chat.completions.create(
             model=self.model,
             max_tokens=max_tokens,
@@ -186,6 +204,8 @@ class _Groq:
                 {"role": "user", "content": prompt},
             ],
         )
+        self.tokens[0] += response.usage.prompt_tokens
+        self.tokens[1] += response.usage.completion_tokens
         return response.choices[0].message.content or ""
 
     def run_tools(
@@ -216,6 +236,8 @@ class _Groq:
                 messages=messages,
                 **({} if last else {"tools": specs, "tool_choice": "auto"}),
             )
+            self.tokens[0] += response.usage.prompt_tokens
+            self.tokens[1] += response.usage.completion_tokens
             message = response.choices[0].message
             if not message.tool_calls:
                 return message.content or ""
@@ -240,8 +262,11 @@ class _Groq:
 @dataclass
 class _Mock:
     model: str
+    tokens: list[int] = field(default_factory=lambda: [0, 0])
 
-    def __call__(self, system: str, prompt: str, max_tokens: int) -> str:  # pragma: no cover
+    def __call__(
+        self, system: str, prompt: str, max_tokens: int, effort: str | None = None
+    ) -> str:  # pragma: no cover
         raise LLMError(
             "the mock backend answers by task name, not by prompt — "
             "call LLM.json()/LLM.text() with a registered task"
@@ -280,6 +305,9 @@ class LLM:
             raise LLMError(f"unknown LLM provider {self.provider!r}")
         self.model = model or settings.llm_model or DEFAULT_MODELS[self.provider]
         self.is_mock = self.provider == "mock"
+        #: task -> [calls, input tokens, output tokens], summed over this
+        #: instance's life. Diff two snapshots to cost one plan.
+        self.usage: dict[str, list[int]] = {}
         backend_cls = {"anthropic": _Anthropic, "groq": _Groq, "mock": _Mock}[self.provider]
         try:
             self._backend = backend_cls(self.model)
@@ -291,6 +319,9 @@ class LLM:
 
     # -- raw text ----------------------------------------------------------
 
+    # Traced in LangSmith when LANGSMITH_TRACING=true (a no-op otherwise):
+    # each call shows its task, prompt and answer inside the graph's trace.
+    @traceable(run_type="llm", name="llm.text")
     def text(
         self,
         *,
@@ -302,10 +333,11 @@ class LLM:
     ) -> str:
         if self.is_mock:
             return str(self._mock(task, context or {}))
-        return self._call(system, prompt, max_tokens)
+        return self._call(system, prompt, max_tokens, task)
 
     # -- JSON --------------------------------------------------------------
 
+    @traceable(run_type="llm", name="llm.json")
     def json(
         self,
         *,
@@ -314,8 +346,14 @@ class LLM:
         prompt: str,
         context: dict[str, Any] | None = None,
         max_tokens: int = 4096,
+        effort: str | None = None,
     ) -> Any:
-        """Call the model and parse a JSON body, retrying once on a parse failure."""
+        """Call the model and parse a JSON body, retrying once on a parse failure.
+
+        `effort` ("low" | "medium" | "high") sets how hard Claude thinks; the
+        simple sorting steps pass "low" because thinking is most of their
+        latency. Other providers ignore it.
+        """
         if self.is_mock:
             return self._mock(task, context or {})
 
@@ -324,7 +362,7 @@ class LLM:
         last_error: Exception | None = None
 
         for _ in range(2):
-            raw = self._call(system, attempt_prompt, max_tokens)
+            raw = self._call(system, attempt_prompt, max_tokens, task, effort)
             try:
                 return json.loads(_first_json_object(raw))
             except (json.JSONDecodeError, ValueError) as exc:
@@ -338,6 +376,7 @@ class LLM:
 
     # -- tools -------------------------------------------------------------
 
+    @traceable(run_type="llm", name="llm.run_tools")
     def run_tools(
         self,
         *,
@@ -367,7 +406,7 @@ class LLM:
                 entry["args"] = args
                 if name not in by_name:
                     raise ValueError(f"unknown tool {name!r}")
-                result = by_name[name].run(**args)
+                result = traceable(run_type="tool", name=name)(by_name[name].run)(**args)
             except Exception as exc:  # noqa: BLE001 - the model sees the error and can retry
                 entry["error"] = f"{type(exc).__name__}: {exc}"
                 return json.dumps({"error": entry["error"]})
@@ -383,7 +422,11 @@ class LLM:
 
         system = f"{system}\n\nWhen you have what you need, respond with JSON only. No prose, no code fences."
         try:
-            raw = self._backend.run_tools(system, prompt, tools, execute, max_rounds, max_tokens)
+            before = list(self._backend.tokens)
+            try:
+                raw = self._backend.run_tools(system, prompt, tools, execute, max_rounds, max_tokens)
+            finally:  # rounds that ran before a failure were still paid for
+                self._record(task, before)
         except Exception as exc:  # noqa: BLE001 - provider SDKs raise their own types
             raise LLMError(f"{self.provider}: {type(exc).__name__}: {exc}") from exc
 
@@ -404,7 +447,45 @@ class LLM:
 
     # -- transport ---------------------------------------------------------
 
-    def _call(self, system: str, prompt: str, max_tokens: int) -> str:
+    def cost(self, usage: dict[str, list[int]] | None = None) -> float | None:
+        """USD for `usage` (default: everything so far), if the price is known."""
+        price = PRICES.get(self.model)
+        if price is None:
+            return None
+        rows = (usage if usage is not None else self.usage).values()
+        return sum(i * price[0] + o * price[1] for _, i, o in rows) / 1_000_000
+
+    def _record(self, task: str, before: list[int]) -> None:
+        spent_in = self._backend.tokens[0] - before[0]
+        spent_out = self._backend.tokens[1] - before[1]
+        row = self.usage.setdefault(task, [0, 0, 0])
+        row[0] += 1
+        row[1] += spent_in
+        row[2] += spent_out
+        self._trace_usage(spent_in, spent_out)
+
+    def _trace_usage(self, tokens_in: int, tokens_out: int) -> None:
+        """Put tokens and cost on the LangSmith step this call belongs to, so
+        the Tokens and Cost columns fill in. Adds up across a step's calls
+        (a JSON retry, the rounds of a tool loop). No-op when not tracing."""
+        run = get_current_run_tree()
+        if run is None:
+            return
+        previous = (run.metadata or {}).get("usage_metadata") or {}
+        i = previous.get("input_tokens", 0) + tokens_in
+        o = previous.get("output_tokens", 0) + tokens_out
+        usage: dict[str, Any] = {"input_tokens": i, "output_tokens": o, "total_tokens": i + o}
+        price = PRICES.get(self.model)
+        if price:
+            usage |= {"input_cost": i * price[0] / 1e6, "output_cost": o * price[1] / 1e6,
+                      "total_cost": (i * price[0] + o * price[1]) / 1e6}
+        run.set(usage_metadata=usage,
+                metadata={"ls_provider": self.provider, "ls_model_name": self.model})
+
+    def _call(
+        self, system: str, prompt: str, max_tokens: int, task: str = "untagged",
+        effort: str | None = None,
+    ) -> str:
         """Single choke point for provider errors.
 
         Provider failures — a dead key, a rate limit, a network blip — surface as
@@ -412,7 +493,10 @@ class LLM:
         so a bad credential degrades the run and says why instead of crashing it.
         """
         try:
-            return self._backend(system, prompt, max_tokens)
+            before = list(self._backend.tokens)
+            text = self._backend(system, prompt, max_tokens, effort)
+            self._record(task, before)
+            return text
         except Exception as exc:  # noqa: BLE001 - provider SDKs raise their own types
             raise LLMError(f"{self.provider}: {type(exc).__name__}: {exc}") from exc
 

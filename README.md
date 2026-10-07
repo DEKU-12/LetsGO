@@ -79,8 +79,9 @@ manual testing. The eval layer found it on its first run — which is the argume
 for building evaluation early rather than last.
 
 **Tool calls are scored, not assumed.** The research agent chooses its own
-lookups — weather for the cities the trip covers, and map checks on places it
-is unsure of (`uv run python -m eval.tools`). On 7 labelled requests, Groq
+lookups — weather for each city the trip covers (`uv run python -m eval.tools`).
+It also had a map-check tool, since removed: the code verifies every place
+afterwards anyway, and the extra rounds of model thinking cost up to ~30 s. On 7 labelled requests, Groq
 `gpt-oss-120b` (Oct 2026):
 
 | Metric | Result |
@@ -89,7 +90,6 @@ is unsure of (`uv run python -m eval.tools`). On 7 labelled requests, Groq
 | Invalid calls (unknown tool, bad arguments) | 0 of 19 |
 | Duplicate calls | 1 (the same place checked twice) |
 | Times code had to fetch weather the model skipped | 0 of 7 |
-| Places kept after the model's own check rejected them | 0 |
 
 The baseline is the fixed call this replaced, which only ever asked about the
 destination as typed: the mock backend reproduces it and scores 5/10, missing
@@ -210,9 +210,12 @@ which is what the trajectory checks in `eval/` score.
   mum's birthday", "tight budget this time") should never be offered, and
   `eval/preferences.py` measures that: 7/7 lasting caught, 0/9 requests leaked
   a trip-only detail (Groq, Oct 2026, 9 cases).
-- **Agents choose, they do not invent.** The itinerary may only schedule
-  attractions the research agent found. Places the model names — attractions
-  and neighbourhoods — are verified against a map dataset.
+- **Agents choose, they do not invent — mostly checked, partly measured.**
+  Places the model names (attractions, neighbourhoods) are verified against a
+  map dataset in code. The itinerary is *told* to schedule only researched
+  places; that is not enforced, but `eval/trajectory.py` lists any schedule
+  entry that is not a researched place, meal, rest or travel. Visa, safety and
+  transport advice is not verified, and the plan says so.
 - **Model backends are swappable** (`backend/llm.py`): `anthropic` (spec default),
   `groq` (cheap iteration), `mock` (no keys). Selected automatically.
 

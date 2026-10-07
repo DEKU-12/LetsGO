@@ -94,6 +94,7 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
         summary = str(
             llm.json(
                 task="plan_summary",
+                effort="low",
                 system=SUMMARY_SYSTEM,
                 prompt=f"Facts available:\n{facts}",
                 context=facts,
@@ -151,7 +152,9 @@ def aggregator(state: TravelState, llm: LLM) -> dict[str, Any]:
             lines.append("**Practical notes**")
             lines.append("")
             lines += [f"- {n}" for n in research.practical_notes]
-            lines.append("")
+            lines += ["", "_General guidance from the model, not checked against official "
+                      "sources. Confirm visa and entry rules with the official government "
+                      "site before you travel._", ""]
 
     if itinerary and itinerary.days:
         lines += ["## Day by day", ""]
