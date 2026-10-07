@@ -15,7 +15,7 @@ map, a real photo of it, and a schedule that respects opening hours.**
 
 ### 🎬 The 25-second trailer
 
-[![Watch the LetsGO trailer: the real app planning a Kyoto trip](docs/letsgo-trailer.jpg)](docs/letsgo-trailer.mp4)
+[![Watch the LetsGO trailer: the real app planning a Kyoto trip](letsgo-trailer-github.mp4)
 
 *Recorded from the real app on Claude Opus: real typing, real agents, real
 result. Click to play.*
