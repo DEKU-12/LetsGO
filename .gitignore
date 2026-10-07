@@ -12,3 +12,6 @@ node_modules/
 dist/
 .DS_Store
 frontend/dist/
+
+# Launch-video working folders (thousands of frames); the trailer itself is in docs/
+brag-output*/

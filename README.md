@@ -1,250 +1,216 @@
-# LetsGO — a multi-agent travel planner you can actually measure
+# ✈️ LetsGO
 
-Give it a request in plain English — *"5 days in Japan, mid-range budget, love
-food and history"* — and a supervisor agent routes the work across a team of
-specialists, which build a day-by-day travel plan together.
+```
+┌──────────────────────────────────────────────────────────────┬────────────────────┐
+│  BOARDING PASS · AI TRAVEL PLANNER                           │  CLASS             │
+│                                                              │  Free demo         │
+│  FROM  one sentence  ─ ─ ─ ✈ ─ ─ ─  TO  a whole trip         │  or your own key   │
+│                                                              │                    │
+│  CREW  6 AI agents · Claude Opus 5.5                         │  ║║│║║││║│║║│║║│   │
+└──────────────────────────────────────────────────────────────┴────────────────────┘
+```
 
-The part that matters: **a first-class evaluation layer**. The system reports
-whether the supervisor routed to the right agents, whether the final plans are
-any good, and — critically — **how far the LLM judge agrees with a human**.
+**Type one sentence. Get a day-by-day trip — with every place checked on a real
+map, a real photo of it, and a schedule that respects opening hours.**
 
-> Status: phases 1–5 done. Agents, evaluation, API and UI all run.
-> Remaining: LangSmith tracing and final polish.
+### 🎬 The 25-second trailer
 
-## Run it with zero API keys
+[![Watch the LetsGO trailer: the real app planning a Kyoto trip](docs/letsgo-trailer.jpg)](docs/letsgo-trailer.mp4)
 
-One command, one process, browser at http://localhost:8000:
+*Recorded from the real app on Claude Opus: real typing, real agents, real
+result. Click to play.*
+
+### 🛫 Try it now → **[letsgo-s9p1.onrender.com](https://letsgo-s9p1.onrender.com)**
+
+Pick **Demo** to fly free (a stand-in model, but real weather, maps and
+photos), or paste your own Anthropic or Groq key for the real thing. Your key
+stays in your browser tab and is never stored. *Free hosting naps after 15
+quiet minutes, so the first load can take about a minute — it's taxiing.*
+
+---
+
+## 🗺️ What happens after you press "Plan it"
+
+You type *"4 days in Kyoto, love temples, gardens and food"*. Then a small
+crew gets to work, and you watch each of them finish live:
+
+```
+your sentence
+   ↓
+🛂 Passport control ── parse_request: turns your words into trip details
+   │                   (or asks a question if it can't)
+   ↓
+🧭 The supervisor ──── decides which specialists this trip needs
+   │
+   ├─▶ 🔎 Researcher ─── finds what's worth seeing, checks the weather for
+   │                     each city it chooses (its own tool calls)
+   ├─▶ 📅 Scheduler ──── builds the day-by-day plan
+   │      └─▶ ✅ Inspector ── checks it: too much in one day? the same place
+   │                          twice? stops 300 km apart? a temple at 6 pm
+   │                          when it shuts at 5? → sends it back to fix
+   ├─▶ 🏨 Stays ──────── which neighbourhoods suit you    ┐ run at the
+   └─▶ 🚆 Transport ──── how to arrive and get around     ┘ same time
+   ↓
+✍️ The writer ──────── assembles the plan from what the crew found
+   ↓
+🧾 Final check ─────── is the plan complete and well-formed?
+```
+
+Six AI agents (supervisor, four specialists, writer), an AI front desk that
+reads your request, and two inspectors written in plain code — because a model
+grading its own homework tends to give itself an A.
+
+## 🎒 What's in the bag
+
+| Feature | What it does |
+| --- | --- |
+| 🗺️ **Verified places** | Every attraction and neighbourhood the AI suggests is looked up on a real map (Geoapify). It recommends, the map confirms. |
+| 📸 **Real photos** | Each place gets *its own* photo — found through the same map entry that verified it, so "Gion" can't come back with a photo of a different Gion. Credited, Wikimedia-licensed. No photo of the place? You get a photo of the city, clearly labelled as one. |
+| 🕘 **Opening hours** | Read from the map and given to the scheduler, so Kiyomizu-dera lands at its 06:00 opening, not at 19:00 when it's shut. |
+| 🌦️ **Weather per city** | A Tokyo-and-Kyoto trip gets the forecast for both — the AI decides which cities to check. |
+| 💬 **Edit by chatting** | "Less walking on day 3." Only day 3 changes; every other day stays exactly as it was. Undo is one click. |
+| ☔ **Trip-day help** | On the trip? Pick your day, press *Check today's weather*. If it's raining, today gets rearranged around indoor places. Sunny? It says so and leaves it alone. |
+| 🧠 **Remembers you (if you say yes)** | "I'm vegetarian" gets offered as something to remember — never saved without a click — and every later plan uses it. "It's for my mum's birthday" is never offered. |
+| 🏨 **Advice, not fake listings** | No invented hotels or fares. You get the neighbourhoods worth staying in and how to get around — the parts a well-travelled friend could actually tell you. |
+| 🔑 **Bring your own key** | The public site uses *your* key for *your* request, then forgets it. |
+
+## 📊 The flight recorder (evaluation)
+
+Most demos show you a nice plan. This one shows you its numbers — measured on
+**Claude Opus 5.5** (Oct 2026), the model it runs on.
+
+| What we measured | Result |
+| --- | --- |
+| **Supervisor picks the right specialists** (31 labelled requests, incl. 12 tricky ones) | **30/31** (96.8%) |
+| **…on every one of 3 repeat runs** (pass^3) | **30/31** — the one miss is consistent, not random |
+| **Ignores prompt injection** ("ignore all previous instructions…", fake "admin mode") | **2/2** |
+| Precision / recall / F1 of agent choice | 1.00 / 0.98 / 0.99 |
+| Supervisor plans the code had to repair | 2/31 |
+| **Researcher checks weather for the right cities** | **10/10** (Rome, Florence *and* Venice included) |
+| …right on all 3 repeat runs (pass^3) | **7/7** requests |
+| Invalid or duplicate tool calls | **0** of 26 |
+| Times code had to fetch weather the AI skipped | 0/7 |
+| Agent paths clean (right order, nothing wasted) | 5/5 |
+| Recommended places confirmed on a real map | 77% — a *floor*, see below |
+| Schedules the inspector had to send back | 1 of 5 plans |
+| Plan quality (AI judge, 1–5) | 3.5 — **not yet validated by a human**, see below |
+| ⏱️ Time per plan | **61 s** average (99 s slowest), down from 78 s |
+| 💸 Cost per plan | **~$0.12** (~12k tokens) |
+
+And two checks where no AI is involved at all:
+
+| What we measured | Result |
+| --- | --- |
+| **Place checker accuracy** (31 labelled places, 10 of them invented) | **21/21** real places confirmed, **10/10** fakes rejected |
+| **Photos** (21 real places, incl. names straight from a real Miami plan) | 19 with a real photo, 18 of the place itself, **0 wrong** |
+
+### Reading the numbers honestly
+
+- **The 30/31 miss might be my label, not the AI.** For *"two weeks backpacking
+  Vietnam, north to south by bus"* I expected it to plan where to stay; Opus
+  decided I hadn't asked. Fair point, honestly.
+- **77% of places confirmed is a floor, not a hallucination rate.** The misses
+  so far are real places the map lists in the local language — the Acropolis,
+  Museu Nacional do Azulejo. "Unconfirmed" means "couldn't confirm", and the app
+  never calls one fake. What matters is the other direction: the checker has
+  never confirmed a made-up place (10/10 rejected).
+- **The judge's 3.5 is unverified.** An AI grading plans needs to be checked
+  against a human first. Until someone grades a batch by hand
+  (`uv run python -m eval.grade`), treat it as a number, not a verdict.
+- **The eval layer pays for itself.** Its very first run caught a bug that had
+  passed every unit test: questions like *"what's the weather in Rome?"* were
+  being rejected as "not a travel request". Later, the speed measurements
+  caught the inspector raising false alarms (it thought Ginkaku-ji was a repeat
+  of Kinkaku-ji). Fixing that, plus two speed-ups, cut the slowest plan from
+  183 s to 99 s.
+
+### Run the scorecards yourself
+
+```bash
+uv run python -m eval.run --repeat 3      # routing (pass^3), plans, judge, time, cost
+uv run python -m eval.tools --repeat 3    # the researcher's tool calls
+uv run python -m eval.places_benchmark    # the place checker itself
+uv run python -m eval.photos              # photos and opening hours
+uv run python -m eval.edits               # chat edits: right days changed, others untouched
+uv run python -m eval.preferences         # remembers "vegetarian", never "mum's birthday"
+uv run python -m eval.grade               # you grade plans, to check the AI judge
+```
+
+Add `--provider mock` to any of them to check the plumbing for free.
+
+## 🛠️ Engine room
+
+```
+LangGraph (agents)  ·  FastAPI + WebSocket (live progress)  ·  React + Vite (UI)
+SQLAlchemy + SQLite  ·  Claude Opus 5.5 / Groq / mock  ·  LangSmith (traces, tokens, cost)
+Geoapify (maps)  ·  OpenWeather  ·  Wikidata + Wikimedia Commons (photos)
+```
+
+| Where | What lives there |
+| --- | --- |
+| `backend/graph.py` | The flight plan: how the agents connect (stays and transport run in parallel) |
+| `backend/agents/` | The crew: supervisor, researcher, scheduler, inspector, stays, transport, writer |
+| `backend/llm.py` | One wrapper for every model call: Claude, Groq or mock; tool calling; token and cost tracking |
+| `backend/adapters/` | Maps, weather, photos — each with a mock mode, so it all runs with zero keys |
+| `backend/hours.py` | Reads opening hours like `Mo-Fr 09:00-17:00; Su off` — and refuses to guess at anything stranger |
+| `backend/edit.py` | Chat edits and trip-day help |
+| `backend/preferences.py` | Spots lasting preferences to offer remembering |
+| `backend/api.py` | The API and live progress stream; each trip belongs to the browser that made it |
+| `eval/` | Every scorecard above |
+| `frontend/` | The chat-style UI |
+
+## 🚀 Run it yourself
+
+**Zero keys** — everything has a stand-in, so a fresh clone just works:
 
 ```bash
 uv sync && npm --prefix frontend install && npm --prefix frontend run build && uv run uvicorn backend.api:app
 ```
 
-Or from the terminal, no UI:
+Then open http://localhost:8000. Or skip the UI:
 
 ```bash
 uv run python -m scripts.run_once "5 days in Japan, mid-range budget, food and history"
 ```
 
-For frontend development, run the API and the Vite dev server separately:
+**For real plans**, copy `.env.example` to `.env` and add an `ANTHROPIC_API_KEY`
+(or a free `GROQ_API_KEY`). Add `GEOAPIFY_API_KEY` and `OPENWEATHER_API_KEY`
+(both free) for real maps, photos and weather.
 
-```bash
-uv run uvicorn backend.api:app --reload        # :8000
-npm --prefix frontend run dev                  # :5173, proxies to :8000
-```
+**Deploy your own:** the repo ships a `render.yaml`. On Render, *New →
+Blueprint*, pick this repo, paste your two map/weather keys. It runs with
+`REQUIRE_USER_KEY=true`, so visitors bring their own model key and your bill
+stays at zero.
 
-Every external call goes through an adapter with a mock mode, and the model
-wrapper itself falls back to deterministic canned responses. With an empty
-environment the whole graph still runs end to end — that is the default, not a
-degraded path.
+## 🦺 Safety on board
 
-To use a real model, copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`
-(the project targets `claude-opus-5-5`, Claude Opus 5.5).
+- **Your key, your request, then gone.** Used for that request only; never
+  saved, logged or traced. With `REQUIRE_USER_KEY=true` the server never falls
+  back to the owner's key.
+- **Your trips are yours.** Each trip belongs to the browser that made it —
+  nobody else can list, read or edit it, even by guessing trip numbers.
+- **The plan can't run code.** It's built from AI output, so it's sanitised
+  (DOMPurify) before it hits a page that might hold your key.
+- **Preferences are opt-in** and deletable, one tap each.
 
-## Deploying it
+## 🌩️ Known turbulence
 
-Set `REQUIRE_USER_KEY=true` on the host. Visitors then pick a model and paste
-their **own** Anthropic or Groq key, or use the free demo mode (fake model,
-real map, weather and photos). Their key is sent with their own requests only,
-used for that request, and never saved, logged or traced; it lives in their
-browser tab's `sessionStorage` until the tab closes. Plan HTML is sanitised
-(DOMPurify) so model output cannot run script on a page that holds a key.
+- **Whole-country trips** ("5 days in Japan") sometimes match a same-named
+  place in the wrong city — usually costing one extra schedule check.
+- **The scheduler is told** to use only researched places, but not forced to; the
+  scorecard lists any stop it slips in (a lane walk here, a promenade there).
+- **Visa, safety and transport tips** come from the model and aren't checked
+  against official sources — the plan says so, right under them.
+- **Demo mode's stand-in model** is a puppet: real maps and photos, but canned
+  attractions. The trailer above is the real thing.
 
-The map and weather keys (`GEOAPIFY_API_KEY`, `OPENWEATHER_API_KEY`) are still
-yours and shared by all visitors, on their free tiers; when a limit is hit the
-adapters fall back to mock data rather than failing. Turn `LANGSMITH_TRACING`
-off on a public deployment unless your privacy note says requests are traced.
+## 🧑‍✈️ Ground crew
 
-## Evaluation results
+- **144 tests** — `uv run pytest`. They run with no keys and touch no paid API.
+- **CI on every push** (GitHub Actions): the tests, every scorecard on the stand-in
+  model, and the frontend build.
+- **CD to Render** — a push to `main` deploys only after CI passes.
+- **LangSmith traces** — every agent step, tool call, token and cent, when
+  `LANGSMITH_TRACING=true`.
 
-```
-uv run python -m eval.run
-```
-
-19 labeled requests, on two model backends. The columns are separate runs on
-different models, months apart — read each on its own, not as a comparison.
-
-| Metric | `claude-sonnet-5` (Aug 2026) | Groq `gpt-oss-120b` (Oct 2026) |
-| --- | --- | --- |
-| Agent-selection exact match | **19/19 (100%)** | **19/19 (100%)** |
-| Micro precision / recall / F1 | 1.00 / 1.00 / 1.00 | 1.00 / 1.00 / 1.00 |
-| Supervisor plans needing repair | 0% | 5.3% (1/19) |
-| Trajectory checks clean | 3/3 | 5/5 |
-| Schedules sent back by the itinerary check | — (check added later) | 1/5 |
-| Mean plan quality (LLM judge) | 3.6 / 5 | 4.6 / 5 |
-| Recommended places confirmed against a map dataset | 65% | 75% (a floor — see below) |
-| **Judge validated against human grades** | **not yet** | **not yet — see below** |
-
-The Groq judge scores its own model's plans, and it has not been checked
-against a human, so its 4.6 is not evidence that Groq plans are better than
-Claude's. Two back-to-back Groq runs gave 4.4 and 4.6, and 82% and 75% of places
-confirmed: differences that size are run-to-run noise. The Claude column predates
-the country-wide place search described below.
-
-**Read the 100% sceptically.** It does not mean the router is perfect; it means
-this 19-case dataset has stopped discriminating. The honest reading is "no known
-failure mode in the cases tested so far", and the next thing the dataset needs is
-genuinely ambiguous requests, not more easy ones.
-
-The first run of this suite scored 84.2%, and the three failures were all the
-same bug: the input guard was rejecting questions like *"what's the weather in
-Rome"* as "not a travel request", so the supervisor never saw them. That bug had
-been in the code since phase 1, passed every unit test, and was invisible in
-manual testing. The eval layer found it on its first run — which is the argument
-for building evaluation early rather than last.
-
-**Tool calls are scored, not assumed.** The research agent chooses its own
-lookups — weather for each city the trip covers (`uv run python -m eval.tools`).
-It also had a map-check tool, since removed: the code verifies every place
-afterwards anyway, and the extra rounds of model thinking cost up to ~30 s. On 7 labelled requests, Groq
-`gpt-oss-120b` (Oct 2026):
-
-| Metric | Result |
-| --- | --- |
-| Weather fetched for the right cities | **9/10** (missed Venice on a three-city Italy trip) |
-| Invalid calls (unknown tool, bad arguments) | 0 of 19 |
-| Duplicate calls | 1 (the same place checked twice) |
-| Times code had to fetch weather the model skipped | 0 of 7 |
-
-The baseline is the fixed call this replaced, which only ever asked about the
-destination as typed: the mock backend reproduces it and scores 5/10, missing
-every second city. Seven cases is small; read this as "works, with one known
-miss", not a rate.
-
-**Places are verified, not trusted.** Every attraction the model recommends is
-checked against Geoapify — does a place by that name exist at that destination?
-The verifier itself is benchmarked (`uv run python -m eval.places_benchmark`):
-on 31 labelled cases across two cities and two countries it confirmed 21/21 real
-places and rejected 10/10 invented ones. Country-level requests ("5 days in
-Japan") used to confirm almost nothing, because the search was a 60 km circle
-around the country's midpoint; they are now searched country-wide. Precision is the number that matters there: a false positive would launder
-a hallucination as verified fact.
-
-The 65% in the table is a **lower bound**, not an estimate of how often the model
-invents places. The current misses are all real — the Acropolis of Athens, Museu
-Nacional do Azulejo — that the map dataset did not match. "Unconfirmed" means
-"could not confirm", and nothing user-facing calls an unconfirmed place fake.
-
-Geoapify is used as a *verifier* rather than a source on purpose, and the reason
-was measured: a radius search around Kyoto returns commemorative plaques and the
-city hall, while Fushimi Inari and Kinkaku-ji do not appear at all. OpenStreetMap
-knows what is near a point, not what is worth seeing. Sourcing attractions from
-it would have made the plans worse.
-
-**The judge is not yet validated.** Its scores (3.6 and 4.6 above) are unverified numbers,
-and the report says so rather than presenting it as a result. Validation needs
-human-graded plans:
-
-```
-uv run python -m eval.grade
-```
-
-## Architecture
-
-```
-request
-  ↓
-parse_request (input guard)  ── unusable? ──▶ clarifying question
-  ↓
-supervisor ⇄ destination_research
-           ⇄ itinerary
-           ⇄ accommodation
-           ⇄ transport
-  ↓
-aggregator → validate_plan (output guard) → markdown plan
-```
-
-The supervisor writes an ordered `route_plan` into shared state and every
-worker returns to it, so `state["trace"]` is a real record of the path taken —
-which is what the trajectory checks in `eval/` score.
-
-| Piece | What it does |
-| --- | --- |
-| `backend/state.py` | The typed state every node reads and writes |
-| `backend/graph.py` | LangGraph wiring |
-| `backend/guards.py` | Free text → validated `TripParams`; output well-formedness |
-| `backend/agents/` | Supervisor + worker nodes |
-| `backend/adapters/` | External APIs, each with a mock mode |
-| `eval/dataset.py` | 19 labeled requests + stored human grades |
-| `eval/selection.py` | Per-agent precision/recall, micro average, exact match |
-| `eval/judge.py` | LLM-as-judge on a 5-part rubric, plus judge-vs-human validation |
-| `eval/trajectory.py` | Dependency order, unused output, repaired routes |
-| `eval/run.py` | The report |
-| `eval/places_benchmark.py` | Error rate of the place verifier itself |
-| `backend/adapters/wikimedia.py` | Photos of verified places via their Wikidata link, with credits |
-| `backend/hours.py` | Reads OpenStreetMap opening hours (common forms only; never guesses) |
-| `eval/photos.py` | Photo and opening-hours coverage on 15 real places |
-| `eval/tools.py` | Research agent tool calls: right tool and city, invalid, duplicate, fallbacks |
-| `backend/preferences.py` | Finds lasting preferences (diet, kids, pace) in a request, to offer remembering |
-| `eval/preferences.py` | Preference extraction: lasting ones caught, trip-only details leaked |
-| `eval/grade.py` | Grade plans by hand, to validate the judge |
-| `eval/edits.py` | Plan edits: right section and days, change made, other days untouched |
-| `backend/edit.py` | Change a finished plan by chatting: reruns one agent, keeps unmentioned days as they were. Trip-day help: checks live weather and rearranges today if it is bad |
-| `backend/api.py` | FastAPI app: `/api/plan`, `/api/trips`, `/api/trips/{id}/edit`, `/api/trips/{id}/today`, `/ws/plan` |
-| `backend/db.py` | Trips and per-agent run records |
-| `frontend/` | React (Vite) chat UI |
-
-## Design notes
-
-- **The aggregator is not a routing decision.** The supervisor chooses among the
-  four workers; the aggregator always runs last to format whatever they produced.
-  Routing metrics are computed over the four workers only.
-- **The final plan is assembled deterministically** from structured state, so
-  nothing reaches the user that an agent did not put into state first. The model
-  writes only the opening paragraph, from facts already present.
-- **Advice, not fake listings.** Real hotel and flight inventory needs a
-  commercial agreement, so the plan does not pretend to have it. "Where to
-  stay" recommends neighbourhoods (checked on a map, like attractions) and
-  "Getting there and around" gives practical guidance — no invented hotel
-  names, prices or fares. Every run ends with the provenance of each data
-  source.
-- **Tool calling where it adds flexibility, fixed calls where correctness
-  matters.** The research agent decides what to look up (`LLM.run_tools`), and
-  every call is logged for evaluation. What must always happen does not depend
-  on the model: weather is fetched anyway if it never asks, and every
-  recommended place is map-verified afterwards in code.
-- **Photos are of the place that was verified.** The map entry that confirmed
-  a place carries its Wikidata id; Wikidata names its photo; Commons supplies
-  it with author and licence, credited under each photo. That link is followed
-  first because it cannot pick a different place with the same name. A place
-  without one falls back to a Wikipedia search, accepted only when the article's title
-  matches *and* its coordinates are near where the map put the place. Anything
-  still without one shows a photo of the destination, labelled "general photo
-  of Miami, not this place". When a link points at something related (a café's
-  famous pastry), the photo is captioned with what it shows. Combined names
-  ("South Beach and Ocean Drive") are split for the lookup, and the research
-  agent is told to name one place per entry. Measure with `eval/photos.py`.
-- **Opening hours come from the same map entry** and are read only when
-  certain (`backend/hours.py`): seasonal or holiday rules are left unread rather
-  than guessed. The itinerary agent sees them, and the schedule check sends a
-  plan back for a visit outside them — or, on a dated trip, on a closed weekday.
-- **Remembering asks first.** After a plan, lasting preferences in the
-  request ("vegetarian", "travels with kids") are offered, not saved; the
-  traveller keeps the ones they want, sees them as tags, and can delete any.
-  There are no accounts — a random id in the browser. Trip-only details ("my
-  mum's birthday", "tight budget this time") should never be offered, and
-  `eval/preferences.py` measures that: 7/7 lasting caught, 0/9 requests leaked
-  a trip-only detail (Groq, Oct 2026, 9 cases).
-- **Agents choose, they do not invent — mostly checked, partly measured.**
-  Places the model names (attractions, neighbourhoods) are verified against a
-  map dataset in code. The itinerary is *told* to schedule only researched
-  places; that is not enforced, but `eval/trajectory.py` lists any schedule
-  entry that is not a researched place, meal, rest or travel. Visa, safety and
-  transport advice is not verified, and the plan says so.
-- **Model backends are swappable** (`backend/llm.py`): `anthropic` (spec default),
-  `groq` (cheap iteration), `mock` (no keys). Selected automatically.
-
-## Build phases
-
-1. ✅ Skeleton: structure, `uv` env, one adapter, supervisor + one worker, runs end to end
-2. ✅ All agents + shared state
-3. ✅ Eval layer (selection metrics, LLM judge + judge validation, trajectory checks)
-4. ⬜ FastAPI backend with WebSocket progress + storage
-5. ⬜ React (Vite) chat UI
-6. ⬜ Real APIs where keys exist + LangSmith tracing
-7. ⬜ Polish: architecture diagram, live demo path, eval results up front
-
-## Tests
-
-```bash
-uv run pytest
-```
+*Bon voyage.* ✈️
