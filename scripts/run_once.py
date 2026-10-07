@@ -40,6 +40,12 @@ def main() -> int:
     print("-" * 72)
     print(state.get("final_plan") or "(no plan produced)")
     print("-" * 72)
+    tokens_in = sum(i for _, i, _ in llm.usage.values())
+    tokens_out = sum(o for _, _, o in llm.usage.values())
+    cost = llm.cost()
+    print(f"tokens   : {tokens_in:,} in / {tokens_out:,} out over "
+          f"{sum(c for c, _, _ in llm.usage.values())} calls"
+          + (f"  (${cost:.3f})" if cost is not None else ""))
     return 0
 
 

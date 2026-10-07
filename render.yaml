@@ -1,0 +1,25 @@
+# Render Blueprint: dashboard → New → Blueprint → pick this repo. Render asks
+# for the two map/weather keys (sync: false); everything else is set here.
+# Visitors bring their own model key (REQUIRE_USER_KEY), so no Anthropic or
+# Groq key is configured on the server.
+services:
+  - type: web
+    name: letsgo
+    runtime: python
+    plan: free
+    buildCommand: pip install uv && uv sync --frozen && npm --prefix frontend ci && npm --prefix frontend run build
+    startCommand: uv run uvicorn backend.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    # Continuous deployment: deploy each push to main, but only once GitHub CI passes.
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: REQUIRE_USER_KEY
+        value: "true"
+      - key: LANGSMITH_TRACING
+        value: "false"
+      - key: GEOAPIFY_API_KEY
+        sync: false
+      - key: OPENWEATHER_API_KEY
+        sync: false
