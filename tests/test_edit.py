@@ -115,8 +115,13 @@ def client() -> TestClient:
         yield c
 
 
+OWNER = "33333333-aaaa-4bbb-8ccc-000000000003"
+
+
 def _plan(client: TestClient) -> dict[str, Any]:
-    return client.post("/api/plan", json={"request": TRIP, "provider": "mock"}).json()
+    return client.post(
+        "/api/plan", json={"request": TRIP, "provider": "mock", "user_id": OWNER}
+    ).json()
 
 
 def test_an_edit_is_saved_as_a_new_version(client: TestClient) -> None:
@@ -124,7 +129,7 @@ def test_an_edit_is_saved_as_a_new_version(client: TestClient) -> None:
 
     body = client.post(
         f"/api/trips/{original['trip_id']}/edit",
-        json={"message": "less walking on day 3", "provider": "mock"},
+        json={"message": "less walking on day 3", "provider": "mock", "user_id": OWNER},
     ).json()
 
     assert body["type"] == "done"
@@ -132,28 +137,30 @@ def test_an_edit_is_saved_as_a_new_version(client: TestClient) -> None:
     assert body["parent_id"] == original["trip_id"]
     assert (body["edited"]["section"], body["edited"]["days"]) == ("itinerary", [3])
 
-    saved = client.get(f"/api/trips/{body['trip_id']}").json()
+    saved = client.get(f"/api/trips/{body['trip_id']}?user_id={OWNER}").json()
     assert saved["parent_id"] == original["trip_id"]
     assert saved["edit_message"] == "less walking on day 3"
     # The original is still there, unchanged: that is the undo.
-    assert client.get(f"/api/trips/{original['trip_id']}").json()["plan"] == original["plan"]
+    first = client.get(f"/api/trips/{original['trip_id']}?user_id={OWNER}").json()
+    assert first["plan"] == original["plan"]
 
 
 def test_a_declined_edit_saves_nothing(client: TestClient) -> None:
     original = _plan(client)
-    newest = client.get("/api/trips?limit=1").json()[0]["id"]
+    newest = client.get(f"/api/trips?user_id={OWNER}&limit=1").json()[0]["id"]
 
     body = client.post(
         f"/api/trips/{original['trip_id']}/edit",
-        json={"message": "go to Korea instead", "provider": "mock"},
+        json={"message": "go to Korea instead", "provider": "mock", "user_id": OWNER},
     ).json()
 
     assert body["type"] == "reply" and body["reply"]
-    assert client.get("/api/trips?limit=1").json()[0]["id"] == newest
+    assert client.get(f"/api/trips?user_id={OWNER}&limit=1").json()[0]["id"] == newest
 
 
 def test_editing_an_unknown_trip_is_a_404(client: TestClient) -> None:
-    response = client.post("/api/trips/999999999/edit", json={"message": "x", "provider": "mock"})
+    response = client.post("/api/trips/999999999/edit",
+                           json={"message": "x", "provider": "mock", "user_id": OWNER})
     assert response.status_code == 404
 
 
@@ -241,7 +248,8 @@ def test_rain_rearranges_only_today_with_the_facts(planned, llm, monkeypatch) ->
 
 def test_today_endpoint_needs_to_know_the_day(client: TestClient) -> None:
     trip_id = _plan(client)["trip_id"]
-    response = client.post(f"/api/trips/{trip_id}/today", json={"provider": "mock"})
+    response = client.post(f"/api/trips/{trip_id}/today",
+                           json={"provider": "mock", "user_id": OWNER})
     assert response.status_code == 400
     assert "Which day" in response.json()["detail"]
 
@@ -256,7 +264,7 @@ def test_today_endpoint_rearranges_in_the_rain(client: TestClient, monkeypatch) 
     )
 
     body = client.post(
-        f"/api/trips/{trip_id}/today", json={"today": 2, "provider": "mock"}
+        f"/api/trips/{trip_id}/today", json={"today": 2, "provider": "mock", "user_id": OWNER}
     ).json()
 
     assert body["type"] == "done"

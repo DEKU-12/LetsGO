@@ -43,22 +43,43 @@ def test_overlong_request_is_rejected(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+OWNER = "11111111-aaaa-4bbb-8ccc-000000000001"
+STRANGER = "22222222-aaaa-4bbb-8ccc-000000000002"
+
+
 def test_a_planned_trip_is_saved_and_retrievable(client: TestClient) -> None:
     created = client.post(
         "/api/plan",
-        json={"request": "3 days in Lisbon, need a hotel", "provider": "mock"},
+        json={"request": "3 days in Lisbon, need a hotel", "provider": "mock", "user_id": OWNER},
     ).json()
 
-    detail = client.get(f"/api/trips/{created['trip_id']}").json()
+    detail = client.get(f"/api/trips/{created['trip_id']}?user_id={OWNER}").json()
     assert detail["request"].startswith("3 days in Lisbon")
     assert detail["plan"] == created["plan"]
     assert [r["agent"] for r in detail["runs"]]
 
-    assert any(t["id"] == created["trip_id"] for t in client.get("/api/trips").json())
+    mine = client.get(f"/api/trips?user_id={OWNER}").json()
+    assert any(t["id"] == created["trip_id"] for t in mine)
+
+
+def test_other_browsers_cannot_list_read_or_edit_a_trip(client: TestClient) -> None:
+    trip_id = client.post(
+        "/api/plan", json={"request": "3 days in Lisbon", "provider": "mock", "user_id": OWNER},
+    ).json()["trip_id"]
+
+    assert all(t["id"] != trip_id for t in client.get(f"/api/trips?user_id={STRANGER}").json())
+    assert client.get(f"/api/trips/{trip_id}?user_id={STRANGER}").status_code == 404
+    edit = {"message": "less walking on day 2", "provider": "mock", "user_id": STRANGER}
+    assert client.post(f"/api/trips/{trip_id}/edit", json=edit).status_code == 404
+    today = {"today": 1, "provider": "mock", "user_id": STRANGER}
+    assert client.post(f"/api/trips/{trip_id}/today", json=today).status_code == 404
+    # And without any id at all.
+    assert client.get("/api/trips").status_code == 422
+    assert client.get(f"/api/trips/{trip_id}").status_code == 422
 
 
 def test_unknown_trip_is_a_404(client: TestClient) -> None:
-    assert client.get("/api/trips/999999").status_code == 404
+    assert client.get(f"/api/trips/999999?user_id={OWNER}").status_code == 404
 
 
 # -- websocket --------------------------------------------------------------

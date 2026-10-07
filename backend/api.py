@@ -34,6 +34,7 @@ from backend.db import (
     init_db,
     list_trips,
     load_state,
+    owns,
     save_trip,
     set_profile,
 )
@@ -91,12 +92,15 @@ class EditRequest(BaseModel):
     today: int | None = Field(default=None, ge=1)
     provider: str | None = None
     api_key: ApiKey = None
+    #: The browser that owns the trip; only it may change it.
+    user_id: str | None = Field(default=None, pattern=USER_ID.pattern)
 
 
 class TodayRequest(BaseModel):
     today: int | None = Field(default=None, ge=1)
     provider: str | None = None
     api_key: ApiKey = None
+    user_id: str | None = Field(default=None, pattern=USER_ID.pattern)
 
 
 @asynccontextmanager
@@ -179,7 +183,8 @@ async def create_plan(body: PlanRequest) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail=KEY_REJECTED)
 
     trip_id = await run_in_threadpool(
-        save_trip, state, provider=llm.provider, model=llm.model, duration_s=elapsed
+        save_trip, state, provider=llm.provider, model=llm.model, duration_s=elapsed,
+        user_id=body.user_id,
     )
     return _result(state, trip_id)
 
@@ -204,13 +209,16 @@ def _check_user_id(user_id: str) -> None:
 
 
 @app.get("/api/trips")
-def trips(limit: int = 50) -> list[dict[str, Any]]:
-    return list_trips(limit=limit)
+def trips(user_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """This browser's trips only."""
+    _check_user_id(user_id)
+    return list_trips(user_id, limit=limit)
 
 
 @app.get("/api/trips/{trip_id}")
-def trip(trip_id: int) -> dict[str, Any]:
-    found = get_trip(trip_id)
+def trip(trip_id: int, user_id: str) -> dict[str, Any]:
+    _check_user_id(user_id)
+    found = get_trip(trip_id, user_id)
     if found is None:
         raise HTTPException(status_code=404, detail="no such trip")
     return found
@@ -228,7 +236,7 @@ async def edit_plan(trip_id: int, body: EditRequest) -> dict[str, Any]:
     reach the right day; without it, the plan's start date is used if it has
     one. When today is known, the live weather is passed along too.
     """
-    state, llm = await _editable(trip_id, body.provider, body.api_key)
+    state, llm = await _editable(trip_id, body.user_id, body.provider, body.api_key)
     today = body.today or trip_day(state, date.today())
     conditions = await _weather_now(state) if today else None
 
@@ -236,7 +244,7 @@ async def edit_plan(trip_id: int, body: EditRequest) -> dict[str, Any]:
     edited, reply = await run_in_threadpool(
         edit_trip, state, body.message, llm, today, conditions
     )
-    return await _edit_result(trip_id, edited, reply, llm, started, body.message)
+    return await _edit_result(trip_id, edited, reply, llm, started, body.message, body.user_id)
 
 
 @app.post("/api/trips/{trip_id}/today")
@@ -246,7 +254,7 @@ async def help_today(trip_id: int, body: TodayRequest) -> dict[str, Any]:
     Changes nothing, and says so, when the weather is fine. Needs to know which
     day of the trip it is: ``today`` in the body, or the plan's start date.
     """
-    state, llm = await _editable(trip_id, body.provider, body.api_key)
+    state, llm = await _editable(trip_id, body.user_id, body.provider, body.api_key)
     today = body.today or trip_day(state, date.today())
     if today is None:
         raise HTTPException(status_code=400, detail="Which day of the trip are you on?")
@@ -257,14 +265,19 @@ async def help_today(trip_id: int, body: TodayRequest) -> dict[str, Any]:
     conditions = await _weather_now(state)
     started = time.monotonic()
     edited, reply = await run_in_threadpool(check_today, state, today, conditions, llm)
-    result = await _edit_result(trip_id, edited, reply, llm, started, f"Check today (day {today})")
+    result = await _edit_result(
+        trip_id, edited, reply, llm, started, f"Check today (day {today})", body.user_id
+    )
     result["weather"] = conditions
     return result
 
 
 async def _editable(
-    trip_id: int, provider: str | None, api_key: str | None
+    trip_id: int, user_id: str | None, provider: str | None, api_key: str | None
 ) -> tuple[TravelState, LLM]:
+    # Someone else's trip answers exactly like a missing one.
+    if not await run_in_threadpool(owns, trip_id, user_id):
+        raise HTTPException(status_code=404, detail="no such trip")
     state = await run_in_threadpool(load_state, trip_id)
     if state is None:
         raise HTTPException(status_code=404, detail="no such trip")
@@ -290,6 +303,7 @@ async def _edit_result(
     llm: LLM,
     started: float,
     message: str,
+    user_id: str | None,
 ) -> dict[str, Any]:
     """Save an edited plan as a new version, or pass the reply through."""
     if edited is None:
@@ -298,7 +312,7 @@ async def _edit_result(
     elapsed = time.monotonic() - started
     new_id = await run_in_threadpool(
         save_trip, edited, provider=llm.provider, model=llm.model, duration_s=elapsed,
-        parent_id=trip_id, edit_message=message,
+        parent_id=trip_id, edit_message=message, user_id=user_id,
     )
     edit = (edited.get("meta") or {}).get("edit", {})
     return {
@@ -402,7 +416,8 @@ async def plan_socket(websocket: WebSocket) -> None:
 
     elapsed = time.monotonic() - started
     trip_id = await run_in_threadpool(
-        save_trip, state, provider=llm.provider, model=llm.model, duration_s=elapsed
+        save_trip, state, provider=llm.provider, model=llm.model, duration_s=elapsed,
+        user_id=user_id,
     )
 
     result = _result(state, trip_id)

@@ -70,6 +70,10 @@ class Trip(Base):
     #: Set on a version made by editing another trip: the trip it was edited
     #: from, and the message that asked for the change. Following parent_id
     #: back is the undo history.
+    #: The anonymous browser id that made this trip. Only that browser can list,
+    #: read or edit it: trip ids count up, so without an owner anyone could
+    #: read every visitor's trips by guessing numbers.
+    user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     parent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     edit_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -142,7 +146,8 @@ def init_db() -> None:
     Base.metadata.create_all(_engine)
     # create_all never alters an existing table, so a database made before
     # these columns existed needs them added by hand.
-    added = {"state": "JSON", "parent_id": "INTEGER", "edit_message": "TEXT"}
+    added = {"state": "JSON", "parent_id": "INTEGER", "edit_message": "TEXT",
+             "user_id": "VARCHAR(64)"}
     columns = {c["name"] for c in inspect(_engine).get_columns("trips")}
     with _engine.begin() as conn:
         for name, kind in added.items():
@@ -171,6 +176,7 @@ def save_trip(
     duration_s: float,
     parent_id: int | None = None,
     edit_message: str | None = None,
+    user_id: str | None = None,
 ) -> int:
     """Persist one finished run. Returns the new trip id."""
     params = state.get("params")
@@ -189,6 +195,7 @@ def save_trip(
             state=_STATE.dump_python(state, mode="json"),
             parent_id=parent_id,
             edit_message=edit_message,
+            user_id=user_id,
         )
 
         errors = state.get("errors") or []
@@ -206,18 +213,27 @@ def save_trip(
         return trip.id
 
 
-def list_trips(limit: int = 50) -> list[dict[str, Any]]:
+def list_trips(user_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """One browser's trips, newest first."""
     with session_scope() as session:
         rows = session.scalars(
-            select(Trip).order_by(Trip.created_at.desc()).limit(limit)
+            select(Trip).where(Trip.user_id == user_id)
+            .order_by(Trip.created_at.desc()).limit(limit)
         ).all()
         return [row.summary() for row in rows]
 
 
-def get_trip(trip_id: int) -> dict[str, Any] | None:
+def get_trip(trip_id: int, user_id: str) -> dict[str, Any] | None:
+    """A trip, if `user_id` owns it. Not found and not yours look the same."""
     with session_scope() as session:
         trip = session.get(Trip, trip_id)
-        return trip.detail() if trip else None
+        return trip.detail() if trip and trip.user_id == user_id else None
+
+
+def owns(trip_id: int, user_id: str | None) -> bool:
+    with session_scope() as session:
+        trip = session.get(Trip, trip_id)
+        return bool(user_id) and trip is not None and trip.user_id == user_id
 
 
 def load_state(trip_id: int) -> TravelState | None:

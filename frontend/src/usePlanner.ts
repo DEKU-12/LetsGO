@@ -171,7 +171,7 @@ export function usePlanner() {
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, ...loadCredentials() }),
+        body: JSON.stringify({ ...body, user_id: USER_ID, ...loadCredentials() }),
       });
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}));
