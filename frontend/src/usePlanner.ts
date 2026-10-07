@@ -18,6 +18,35 @@ export const USER_ID: string | null = (() => {
   }
 })();
 
+/** The visitor's model choice and own API key (deployed mode only). */
+export interface Credentials {
+  provider: string;
+  api_key: string;
+}
+
+const CREDENTIALS = "letsgo-credentials";
+
+/**
+ * Kept in sessionStorage: gone when the tab closes, and only ever sent to this
+ * app's own server, with the visitor's own requests. Null when not set (local
+ * development, where the server uses its own key).
+ */
+export function loadCredentials(): Credentials | null {
+  try {
+    return JSON.parse(sessionStorage.getItem(CREDENTIALS) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+export function saveCredentials(credentials: Credentials): void {
+  try {
+    sessionStorage.setItem(CREDENTIALS, JSON.stringify(credentials));
+  } catch {
+    // storage blocked: the choice lasts until the page reloads
+  }
+}
+
 /** One entry in the live progress list. */
 export interface Step {
   agent: string;
@@ -74,7 +103,8 @@ export function usePlanner() {
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/plan`);
     socket.current = ws;
 
-    ws.onopen = () => ws.send(JSON.stringify({ request, user_id: USER_ID }));
+    ws.onopen = () =>
+      ws.send(JSON.stringify({ request, user_id: USER_ID, ...loadCredentials() }));
 
     ws.onmessage = (event) => {
       const message: ServerEvent = JSON.parse(event.data);
@@ -141,7 +171,7 @@ export function usePlanner() {
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, ...loadCredentials() }),
       });
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}));

@@ -115,16 +115,20 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 class _Anthropic:
     model: str
     tokens: list[int] = field(default_factory=lambda: [0, 0])
+    #: A visitor's own key, for this request only. repr=False keeps it out of
+    #: any log line or trace that prints the object.
+    api_key: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         import anthropic  # imported lazily so the mock path needs no SDK
 
         headers = {}
-        if settings.anthropic_workspace_id:
+        # The workspace id belongs to the server's own key, not a visitor's.
+        if settings.anthropic_workspace_id and not self.api_key:
             headers["anthropic-workspace-id"] = settings.anthropic_workspace_id
 
         self._client = anthropic.Anthropic(
-            api_key=settings.anthropic_api_key,
+            api_key=self.api_key or settings.anthropic_api_key,
             # A stray ANTHROPIC_BASE_URL in the shell would otherwise send
             # these requests somewhere unexpected.
             base_url="https://api.anthropic.com",
@@ -186,11 +190,13 @@ class _Anthropic:
 class _Groq:
     model: str
     tokens: list[int] = field(default_factory=lambda: [0, 0])
+    api_key: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         from groq import Groq
 
-        self._client = Groq(api_key=settings.groq_api_key, max_retries=MAX_RETRIES)
+        self._client = Groq(api_key=self.api_key or settings.groq_api_key,
+                            max_retries=MAX_RETRIES)
 
     def __call__(
         self, system: str, prompt: str, max_tokens: int, effort: str | None = None
@@ -263,6 +269,7 @@ class _Groq:
 class _Mock:
     model: str
     tokens: list[int] = field(default_factory=lambda: [0, 0])
+    api_key: str | None = field(default=None, repr=False)
 
     def __call__(
         self, system: str, prompt: str, max_tokens: int, effort: str | None = None
@@ -299,7 +306,13 @@ def register_mock(task: str) -> Callable[[MockFn], MockFn]:
 class LLM:
     """The single entry point every agent uses to talk to a model."""
 
-    def __init__(self, provider: str | None = None, model: str | None = None) -> None:
+    def __init__(
+        self, provider: str | None = None, model: str | None = None, api_key: str | None = None
+    ) -> None:
+        """`api_key` is a visitor's own key, used for this instance only and
+        never stored. With REQUIRE_USER_KEY set, a real provider needs one."""
+        if settings.require_user_key and provider != "mock" and not api_key:
+            raise LLMError("This site needs your own API key — or pick the free demo mode.")
         self.provider = provider or settings.resolved_provider()
         if self.provider not in DEFAULT_MODELS:
             raise LLMError(f"unknown LLM provider {self.provider!r}")
@@ -310,7 +323,7 @@ class LLM:
         self.usage: dict[str, list[int]] = {}
         backend_cls = {"anthropic": _Anthropic, "groq": _Groq, "mock": _Mock}[self.provider]
         try:
-            self._backend = backend_cls(self.model)
+            self._backend = backend_cls(self.model, api_key=api_key)
         except Exception as exc:  # noqa: BLE001 - a bad client config is an LLM error
             raise LLMError(f"could not initialise {self.provider} backend: {exc}") from exc
 

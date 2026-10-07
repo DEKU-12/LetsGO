@@ -49,6 +49,13 @@ class Settings:
         default_factory=lambda: _env("DATABASE_URL") or "sqlite:///./letsgo.db"
     )
 
+    #: Deployed mode: every model request must bring the visitor's own API key,
+    #: and the server never falls back to the keys above. The free demo mode
+    #: (mock model) still works without one.
+    require_user_key: bool = field(
+        default_factory=lambda: (_env("REQUIRE_USER_KEY") or "").lower() == "true"
+    )
+
     # LangSmith reads LANGSMITH_TRACING / _API_KEY / _PROJECT from the
     # environment itself; nothing here needs a copy.
 

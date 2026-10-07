@@ -40,6 +40,20 @@ degraded path.
 To use a real model, copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`
 (the project targets `claude-opus-5-5`, Claude Opus 5.5).
 
+## Deploying it
+
+Set `REQUIRE_USER_KEY=true` on the host. Visitors then pick a model and paste
+their **own** Anthropic or Groq key, or use the free demo mode (fake model,
+real map, weather and photos). Their key is sent with their own requests only,
+used for that request, and never saved, logged or traced; it lives in their
+browser tab's `sessionStorage` until the tab closes. Plan HTML is sanitised
+(DOMPurify) so model output cannot run script on a page that holds a key.
+
+The map and weather keys (`GEOAPIFY_API_KEY`, `OPENWEATHER_API_KEY`) are still
+yours and shared by all visitors, on their free tiers; when a limit is hit the
+adapters fall back to mock data rather than failing. Turn `LANGSMITH_TRACING`
+off on a public deployment unless your privacy note says requests are traced.
+
 ## Evaluation results
 
 ```

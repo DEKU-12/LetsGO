@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { USER_ID, usePlanner } from "./usePlanner";
+import { USER_ID, loadCredentials, saveCredentials, usePlanner } from "./usePlanner";
+import type { Credentials } from "./usePlanner";
 import type { Health, PlanResult } from "./types";
 
 const EDIT_EXAMPLES = [
@@ -70,7 +72,8 @@ export default function App() {
           A supervisor routes your request across specialist agents, then they
           build a plan together.
         </p>
-        {health && (
+        {health?.require_user_key && <KeyPanel />}
+        {health?.provider && (
           <p className="backend">
             {health.provider} / {health.model}
             {health.mock && <span className="warn"> · mock data, no API key set</span>}
@@ -223,6 +226,44 @@ function Progress({
   );
 }
 
+function KeyPanel() {
+  const [credentials, setCredentials] = useState<Credentials>(
+    () => loadCredentials() ?? { provider: "mock", api_key: "" },
+  );
+  useEffect(() => saveCredentials(credentials), [credentials]);
+
+  return (
+    <div className="keys">
+      <label>
+        Model{" "}
+        <select
+          value={credentials.provider}
+          onChange={(e) => setCredentials({ provider: e.target.value, api_key: "" })}
+        >
+          <option value="mock">Demo — fake AI, free</option>
+          <option value="anthropic">Claude Opus — your Anthropic key</option>
+          <option value="groq">Groq — your Groq key (free tier)</option>
+        </select>
+      </label>
+      {credentials.provider !== "mock" && (
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          aria-label="Your API key"
+          placeholder="Paste your API key"
+          value={credentials.api_key}
+          onChange={(e) => setCredentials({ ...credentials, api_key: e.target.value.trim() })}
+        />
+      )}
+      <p className="key-note">
+        Your key stays in this browser tab and is sent only with your own requests. The
+        server uses it for that request and never stores it.
+      </p>
+    </div>
+  );
+}
+
 function EditBox({
   tripId,
   result,
@@ -343,8 +384,10 @@ function describeEdit(edited: NonNullable<PlanResult["edited"]>): string {
 function Plan({ markdown }: { markdown: string }) {
   const html = useMemo(
     () =>
-      // Photos load lazily, and without telling Wikimedia which page asked.
-      (marked.parse(markdown, { async: false }) as string).replaceAll(
+      // Sanitised: the plan is built from model output, and this page can hold
+      // a visitor's API key, so no script, event handler or javascript: link
+      // may survive. Photos then load lazily, without a referrer.
+      DOMPurify.sanitize(marked.parse(markdown, { async: false }) as string).replaceAll(
         "<img ",
         '<img loading="lazy" referrerpolicy="no-referrer" ',
       ),

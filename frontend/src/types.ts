@@ -55,8 +55,10 @@ export type ServerEvent =
 
 export interface Health {
   status: string;
-  provider: string;
-  model: string;
+  provider: string | null;
+  model: string | null;
   mock: boolean;
+  /** Deployed mode: visitors bring their own model key. */
+  require_user_key: boolean;
   agents: string[];
 }

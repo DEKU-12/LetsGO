@@ -45,7 +45,8 @@ def _groq_llm(monkeypatch, turns) -> tuple[LLM, _ScriptedGroq]:
     # A dummy key: the SDK client is replaced below, so nothing reaches Groq.
     monkeypatch.setattr(
         "backend.llm.settings",
-        SimpleNamespace(groq_api_key="test", llm_model=None, resolved_provider=lambda: "groq"),
+        SimpleNamespace(groq_api_key="test", llm_model=None, require_user_key=False,
+                        resolved_provider=lambda: "groq"),
     )
     llm = LLM(provider="groq")
     fake = _ScriptedGroq(turns)

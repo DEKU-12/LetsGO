@@ -204,6 +204,27 @@ textarea:disabled { opacity: 0.6; }
 }
 .edit input:disabled { opacity: 0.6; }
 
+.keys {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.keys select,
+.keys input {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.keys input { flex: 1; min-width: 12rem; }
+.key-note { margin: 0; flex-basis: 100%; font-size: 0.78rem; }
+
 .profile {
   display: flex;
   gap: 0.4rem;

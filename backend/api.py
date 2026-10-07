@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from backend.adapters.weather import WeatherAdapter
-from backend.config import PROJECT_ROOT
+from backend.config import PROJECT_ROOT, settings
 from backend.db import (
     get_profile,
     get_trip,
@@ -66,9 +66,15 @@ MAX_REQUEST_CHARS = 2000
 USER_ID = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 
 
+#: A visitor's own model key: used for the one request it arrives with, never
+#: saved, logged or traced.
+ApiKey = Annotated[str | None, Field(default=None, max_length=300)]
+
+
 class PlanRequest(BaseModel):
     request: str = Field(min_length=1, max_length=MAX_REQUEST_CHARS)
     provider: str | None = None
+    api_key: ApiKey = None
     #: Anonymous browser id; its saved preferences are applied to the plan.
     user_id: str | None = Field(default=None, pattern=USER_ID.pattern)
 
@@ -84,11 +90,13 @@ class EditRequest(BaseModel):
     #: The day of the trip the traveller is on, if they said.
     today: int | None = Field(default=None, ge=1)
     provider: str | None = None
+    api_key: ApiKey = None
 
 
 class TodayRequest(BaseModel):
     today: int | None = Field(default=None, ge=1)
     provider: str | None = None
+    api_key: ApiKey = None
 
 
 @asynccontextmanager
@@ -131,21 +139,35 @@ def _result(state: dict[str, Any], trip_id: int | None) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    if settings.require_user_key:
+        # Visitors bring their own key; there is no server model to describe.
+        return {"status": "ok", "provider": None, "model": None, "mock": False,
+                "require_user_key": True, "agents": list(WORKER_NODES)}
     llm = LLM()
     return {
         "status": "ok",
         "provider": llm.provider,
         "model": llm.model,
         "mock": llm.is_mock,
+        "require_user_key": False,
         "agents": list(WORKER_NODES),
     }
+
+
+def _key_rejected(state: TravelState) -> bool:
+    """Did the provider refuse the key? Without this, a bad key surfaces as
+    "couldn't read that request" — true, but useless to the visitor."""
+    return any("AuthenticationError" in e for e in state.get("errors") or [])
+
+
+KEY_REJECTED = "The API key was rejected by the provider. Check it and try again."
 
 
 @app.post("/api/plan")
 async def create_plan(body: PlanRequest) -> dict[str, Any]:
     """Plan a trip and wait for the answer. Use the WebSocket for progress."""
     try:
-        llm = LLM(provider=body.provider)
+        llm = LLM(provider=body.provider, api_key=body.api_key)
     except LLMError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -153,6 +175,8 @@ async def create_plan(body: PlanRequest) -> dict[str, Any]:
     started = time.monotonic()
     state = await run_in_threadpool(plan_trip, body.request, llm, profile)
     elapsed = time.monotonic() - started
+    if _key_rejected(state):
+        raise HTTPException(status_code=401, detail=KEY_REJECTED)
 
     trip_id = await run_in_threadpool(
         save_trip, state, provider=llm.provider, model=llm.model, duration_s=elapsed
@@ -204,7 +228,7 @@ async def edit_plan(trip_id: int, body: EditRequest) -> dict[str, Any]:
     reach the right day; without it, the plan's start date is used if it has
     one. When today is known, the live weather is passed along too.
     """
-    state, llm = await _editable(trip_id, body.provider)
+    state, llm = await _editable(trip_id, body.provider, body.api_key)
     today = body.today or trip_day(state, date.today())
     conditions = await _weather_now(state) if today else None
 
@@ -222,7 +246,7 @@ async def help_today(trip_id: int, body: TodayRequest) -> dict[str, Any]:
     Changes nothing, and says so, when the weather is fine. Needs to know which
     day of the trip it is: ``today`` in the body, or the plan's start date.
     """
-    state, llm = await _editable(trip_id, body.provider)
+    state, llm = await _editable(trip_id, body.provider, body.api_key)
     today = body.today or trip_day(state, date.today())
     if today is None:
         raise HTTPException(status_code=400, detail="Which day of the trip are you on?")
@@ -238,14 +262,16 @@ async def help_today(trip_id: int, body: TodayRequest) -> dict[str, Any]:
     return result
 
 
-async def _editable(trip_id: int, provider: str | None) -> tuple[TravelState, LLM]:
+async def _editable(
+    trip_id: int, provider: str | None, api_key: str | None
+) -> tuple[TravelState, LLM]:
     state = await run_in_threadpool(load_state, trip_id)
     if state is None:
         raise HTTPException(status_code=404, detail="no such trip")
     if not state.get("final_plan"):
         raise HTTPException(status_code=400, detail="this trip has no plan to edit")
     try:
-        return state, LLM(provider=provider)
+        return state, LLM(provider=provider, api_key=api_key)
     except LLMError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -315,8 +341,10 @@ async def plan_socket(websocket: WebSocket) -> None:
         await websocket.close()
         return
 
+    api_key = payload.get("api_key")
     try:
-        llm = LLM(provider=payload.get("provider"))
+        llm = LLM(provider=payload.get("provider"),
+                  api_key=api_key if isinstance(api_key, str) and len(api_key) <= 300 else None)
     except LLMError as exc:
         await websocket.send_json({"type": "error", "message": str(exc)})
         await websocket.close()
@@ -364,6 +392,11 @@ async def plan_socket(websocket: WebSocket) -> None:
         return
     except Exception as exc:  # noqa: BLE001 - the socket must always be told
         await websocket.send_json({"type": "error", "message": str(exc)})
+        await websocket.close()
+        return
+
+    if _key_rejected(state):
+        await websocket.send_json({"type": "error", "message": KEY_REJECTED})
         await websocket.close()
         return
 
